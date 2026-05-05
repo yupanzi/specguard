@@ -1,0 +1,52 @@
+{
+  "name": "@yupanzi/specguard",
+  "version": "0.1.0",
+  "description": "Spec-guarded AI workflow CLI; runtime backend for the specguard Claude Code plugin. Never imports any AI SDK.",
+  "license": "MIT",
+  "author": "specguard contributors",
+  "homepage": "https://github.com/yupanzi/specguard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yupanzi/specguard.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/yupanzi/specguard/issues"
+  },
+  "keywords": [
+    "spec-driven",
+    "claude-code",
+    "claude-code-plugin",
+    "ai-workflow",
+    "yaml",
+    "state-machine",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "specguard": "./bin/specguard"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "ajv": "^8.12.0",
+    "commander": "^11.1.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://specguard.dev/schemas/config.schema.json",
+  "title": "specguard config",
+  "type": "object",
+  "required": ["version", "enforcement"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "enforcement": { "enum": ["strict", "warn", "off"] },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "yaml-write": {
+          "anyOf": [
+            { "enum": ["strict", "warn", "off"] },
+            { "type": "null" }
+          ]
+        },
+        "session-start": {
+          "anyOf": [
+            { "enum": ["strict", "warn", "off"] },
+            { "type": "null" }
+          ]
+        },
+        "prompt-submit": {
+          "anyOf": [
+            { "enum": ["strict", "warn", "off"] },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

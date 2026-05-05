@@ -1,0 +1,6 @@
+version: 1
+enforcement: warn
+hooks:
+  yaml-write: null
+  session-start: null
+  prompt-submit: null

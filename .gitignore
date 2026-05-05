@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+.DS_Store
+# specguard ephemeral changes - not committed
+.specguard/changes/
+# .specguard/notebook/ MUST be committed (project KSC memory: knowledge/skill/check) - intentionally not ignored

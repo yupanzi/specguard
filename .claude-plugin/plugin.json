@@ -1,0 +1,8 @@
+{
+  "name": "specguard",
+  "description": "State-machine YAML workflow for spec-driven dev. Four-step contract: ask-plan → run-pipeline → sign-check → sync-notebook.",
+  "version": "0.1.0",
+  "author": { "name": "specguard contributors" },
+  "license": "MIT",
+  "homepage": "https://github.com/yupanzi/specguard"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "specguard-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "specguard contributors",
+  "homepage": "https://github.com/yupanzi/specguard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yupanzi/specguard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yupanzi/specguard/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b packages/cli",
+    "lint:no-ai-sdk": "node -e \"const p=require('./packages/cli/package.json');const all={...p.dependencies,...p.devDependencies};const bad=Object.keys(all).filter(k=>/anthropic|openai|@google\\/generative-ai|cohere/i.test(k));if(bad.length){console.error('AI SDK detected:',bad);process.exit(1)}console.log('OK no AI SDK')\"",
+    "test": "npm run build && node --test $(find packages/cli/test -name '*.test.js')",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "husky": "^9.1.7",
+    "semantic-release": "^25.0.3"
+  }
+}

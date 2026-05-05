@@ -1,0 +1,14 @@
+{
+  "name": "specguard-marketplace",
+  "version": "0.1.0",
+  "description": "specguard plugin local marketplace (single-plugin source).",
+  "owner": { "name": "specguard contributors" },
+  "plugins": [
+    {
+      "name": "specguard",
+      "description": "State-machine YAML workflow for spec-driven dev. Four-step contract: ask-plan → run-pipeline → sign-check → sync-notebook.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://specguard.dev/schemas/check.schema.json",
+  "title": "specguard check",
+  "type": "object",
+  "required": ["id", "attempts"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["n", "check_results", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "n": { "type": "integer", "minimum": 1 },
+          "check_results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "status"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "status": { "enum": ["pending", "pass", "fail"] },
+                "evidence": { "type": "string" }
+              }
+            }
+          },
+          "verdict": {
+            "enum": ["done", "re-run", "re-plan", "awaiting-llm", "ksc-rejected", "approval-rejected"]
+          },
+          "approved": { "type": "boolean" },
+          "ksc_check": {
+            "type": "object",
+            "required": ["status"],
+            "additionalProperties": false,
+            "properties": {
+              "status": { "enum": ["pass", "fail", "skipped"] },
+              "evidence": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
