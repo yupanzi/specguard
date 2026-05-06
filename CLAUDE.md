@@ -17,6 +17,33 @@ specguard is distributed as a **Claude Code Plugin**: the repo root is the plugi
 
 ---
 
+## Operating axioms
+
+All specguard mechanisms exist to serve these 6 axioms; the KSC three libraries are merely the landing layer:
+
+1. **Knowledge must be understood** — K library carries `## Abstractions` + Why footnotes, not a fact list
+2. **Requirements must be aligned** — sg-ask-plan AskUserQuestion ≤ 4/batch; flush each answer to plan.yaml immediately
+3. **Decisions must be explainable** — S library decision templates carry Why; ksc_check.evidence ≤ 3 sentences/library
+4. **Experience must be reused** — notebook persists across tasks; survives `rm -rf changes/<dateId>`
+5. **Constraints must be tractable** — check.how priority cmd > llm > manual; loop ≤ 3; v1/v2 version split
+6. **Evaluation must be verifiable** — C library cmd/llm/manual triad; non-verifiable "constraints" don't enter the library
+
+| K/S/C (schema) | Phase (SKILL.md)              | Semantics (design) |
+|----------------|-------------------------------|--------------------|
+| **K** Knowledge | Alignment (`sg-ask-plan`)     | Facts              |
+| **S** Skill     | Reasoning (`sg-run-pipeline`) | Decisions          |
+| **C** Check     | Evaluation (`sg-sign-check`)  | Constraints        |
+
+The fourth phase **Distillation** (`/specguard:sg-sync-notebook`) closes the loop — it writes the run's lessons back into K/S/C; it doesn't bind to a single library, so it lives outside the table.
+
+**Notebook scope is project, not task.** A line earns a K/S/C entry only if it survives task deletion: ask "would this still be useful after `rm -rf changes/<dateId>`?" — yes → notebook (K/S/C); no → plan.yaml. Task-specific spec details (e.g. "this dateId implements OAuth with Google as the provider") belong to plan.yaml; project-level invariants (e.g. "the four-phase loop is non-skippable", "CLI never calls LLM") belong to K.
+
+**Information-source boundary for K.** Domain-specific facts (business rules, internal terminology, project-specific conventions) MUST be user-provided. AI-inferred domain knowledge is rejected. Generic knowledge (language/framework facts queryable in public docs) may be AI-suggested but still requires user confirmation via AskUserQuestion before admission. The danger: LLMs hallucinate domain rules fluently and convincingly — once they pollute K, every downstream sg-sign-check uses a corrupted baseline.
+
+Letters K/S/C are locked by schema; the three semantic layers coexist — pick by audience: schema / ref_id / file paths use K/S/C; each loop SKILL.md flags its phase up front (Alignment / Reasoning / Evaluation / Distillation), so phase names are the right shorthand for design discussion of the loop; internal trade-off discussions use Facts/Decisions/Constraints.
+
+---
+
 ## Inviolable hard rules
 
 ### 1. The CLI and hook scripts never call the LLM
@@ -207,6 +234,12 @@ Distilling into the memory library is a "value layer" operation; the human must 
 ### 7. CLI argument is dateId, not id
 
 `specguard validate <dateId>` / `specguard verify <dateId>`. dateId format: `{YYYYMMDD}-<kebab-id>`, e.g. `20260504-add-auth`. `yaml-io.ts:parseDateId` parses it. plan.id MUST equal the parsed id portion.
+
+### 8. CLI not on PATH = hooks silently no-op
+
+`hooks/scripts/*.sh` is `command -v specguard ... || true`: if `@yupanzi/specguard` isn't installed globally, every hook **exits 0 with no stderr** — yaml-write / session-start / prompt-submit are nominally registered but enforce nothing. Schema violations slip through; no validation log; the user sees "the plugin is doing nothing".
+
+`/specguard:sg-init-project` step 1 (Ensure CLI is on PATH) is the cure — see that skill for the install flow. When a user reports "I edited plan.yaml but nothing validated", the very first probe is `command -v specguard`.
 
 ---
 

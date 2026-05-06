@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /sg-sign-check
 
-Value-layer gate: on top of the machine-layer checks already passed in run-pipeline, perform KSC review + approve decision.
+**Evaluation phase** of the four-phase loop (KSC role: **C — Check**, applying correctness criteria). Value-layer gate: on top of the machine-layer checks already passed in run-pipeline, perform KSC review + approve decision.
 
 ## Preconditions
 

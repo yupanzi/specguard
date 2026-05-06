@@ -12,7 +12,26 @@ The CLI's `specguard init` only does the deterministic skeleton (create dirs / w
 
 ## Flow
 
-### 1. Detect current state
+### 1. Ensure CLI is on PATH
+
+Run `command -v specguard` via Bash before anything else.
+
+- **Found** → record `specguard --version` and proceed to step 2.
+- **Missing** → AskUserQuestion to pick an installer (single batch, default npm + abort option):
+
+  | Option | Command |
+  | ------ | ------- |
+  | npm (default) | `npm install -g @yupanzi/specguard` |
+  | pnpm | `pnpm add -g @yupanzi/specguard` |
+  | yarn (classic) | `yarn global add @yupanzi/specguard` |
+  | bun | `bun add -g @yupanzi/specguard` |
+  | I'll install it myself | abort the skill, surface the suggested command for the user to run manually |
+
+  Run the chosen command via Bash, then assert `specguard --version` succeeds before continuing. If verification fails (PATH cache, permission, registry error, ...), surface the install command's stderr to the user and abort — do **NOT** silently fall back to a different installer.
+
+Why this is step 1: hook scripts (`hooks/scripts/*.sh`) are 1-line `command -v specguard ... || true` shims (CLAUDE.md hard rule #7). Without the CLI on PATH the yaml-write / session-start / prompt-submit guards **silently exit 0** — the plugin appears installed but enforces nothing. Step 1 is what makes the rest of the plugin live.
+
+### 2. Detect current state
 
 Read:
 
@@ -21,10 +40,10 @@ Read:
 
 Two cases:
 
-- **First run** (`config.yaml` absent) → step 2
-- **Subsequent run** (`config.yaml` present) → step 3
+- **First run** (`config.yaml` absent) → step 3
+- **Subsequent run** (`config.yaml` present) → step 4
 
-### 2. First run: bootstrap the skeleton
+### 3. First run: bootstrap the skeleton
 
 `AskUserQuestion` for the enforcement level (strict / warn / off, default warn).
 
@@ -36,19 +55,19 @@ specguard init --enforcement <level>
 
 The CLI prints `gitignore: appended/noop/skipped (no .gitignore)` — verify it matches expectation (existing `.gitignore` already has the specguard line → noop; blank project → appended; no `.gitignore` at all → skipped).
 
-Once the skeleton is in place, proceed to step 4.
+Once the skeleton is in place, proceed to step 5.
 
-### 3. Subsequent run: three-way choice
+### 4. Subsequent run: three-way choice
 
 `AskUserQuestion` with three options:
 
 | Option | Behavior |
 | ------ | -------- |
 | Skip | Exit immediately, touch nothing |
-| Append | Proceed to step 4; in step 7 **skip topics that already exist** (avoid overwriting human edits / sync distillations) |
-| Diff report | Proceed to step 4; in step 7 skip writes and **emit a markdown diff report only** (candidates list + comparison vs. existing topics) |
+| Append | Proceed to step 5; in step 8 **skip topics that already exist** (avoid overwriting human edits / sync distillations) |
+| Diff report | Proceed to step 5; in step 8 skip writes and **emit a markdown diff report only** (candidates list + comparison vs. existing topics) |
 
-### 4. Scan project "shape" (prior material)
+### 5. Scan project "shape" (prior material)
 
 Read the following in order; each piece is K/S/C candidate material:
 
@@ -68,7 +87,12 @@ Read the following in order; each piece is K/S/C candidate material:
 
 **Don't copy README verbatim** — README is the manual; notebook is the "why" for AI. Distill, don't transcribe.
 
-### 5. Generate KSC candidates
+### 6. Generate KSC candidates
+
+**Two firewalls before generating any candidate** (rules + rationale: CLAUDE.md Operating axioms § Notebook scope / Information-source boundary):
+
+1. **Scope test** — would this candidate survive `rm -rf changes/<dateId>` and still help the *next* task? If it only matters for the current init/onboarding context, it's task scope: discard. (init-specific watch-out: don't admit "I just ran specguard init with enforcement=warn" — that's the event, not a project rule.)
+2. **Source test** — for any K candidate, classify as public (language/framework/build system, queryable in public docs) vs domain-specific (business terminology, internal convention, project-specific behavior). Domain-specific MUST be user-confirmed via the step 7 AskUserQuestion batch — never inferred silently. Public facts still need step 7 confirmation.
 
 Each candidate is its own asset; the three categories are strictly distinct:
 
@@ -100,7 +124,7 @@ The body must list **multiple stacks side-by-side** (CLAUDE.md hard rule #6):
 - Check examples: `{ cmd: [npx, vitest, run, ...] }` / `{ cmd: [pytest, -q, ...] }` / `{ cmd: [cargo, test, ...] }` / `{ cmd: [go, test, ./...] }`
 - Metadata-file examples: `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` / `pom.xml`
 
-### 6. AskUserQuestion batched review
+### 7. AskUserQuestion batched review
 
 ≤ 4 items per batch (CLAUDE.md collaboration convention). Each candidate decided independently:
 
@@ -110,13 +134,13 @@ The body must list **multiple stacks side-by-side** (CLAUDE.md hard rule #6):
 
 Pattern reference: `/sg-sync-notebook` step 4.
 
-### 7. Write to notebook (index-first)
+### 8. Write to notebook (index-first)
 
-Per the step-3 selection:
+Per the step-4 selection:
 
 - **First run / Append**: for each admitted candidate, do two writes in order:
   1. **Update the library INDEX first** — read `.specguard/notebook/<library>/INDEX.md`, append a new entry to its frontmatter `references` array `{ ref_id, file: <topic>.md, when: <one-line trigger condition> }`, and add a matching `- [<ref_id>](<topic>.md) — when: ...` line under `## Topics`. If the library has invariant-class or abstraction-class material extracted from this candidate, also append to `## Invariants` / `## Abstractions` (knowledge) or `## Decision Triggers` (skill) or `## Cmd Matrix / Llm Checks / Manual Checklists` (check) — those sections live in the INDEX, not the topic.
-  2. **Write the topic file** at `.specguard/notebook/<library>/<topic>.md` with the frontmatter shown in step 5 plus the dense body.
+  2. **Write the topic file** at `.specguard/notebook/<library>/<topic>.md` with the frontmatter shown in step 6 plus the dense body.
   - Topic path exists → skip BOTH writes (append semantics; don't mutate human edits or sync content; ref_id auto-bump if a reference is needed for a different reason)
   - Topic path doesn't exist → create new (version=1)
 - **Diff report**: skip writes, emit a markdown report:
@@ -137,7 +161,7 @@ Per the step-3 selection:
   - Candidate <new-topic> overlaps existing <old-topic>; recommend the next /sg-sync-notebook take the supersedes path
   ```
 
-### 8. Model self-confirmation
+### 9. Model self-confirmation
 
 After writes complete, re-read every newly-written `.md` file AND the touched library `INDEX.md`:
 

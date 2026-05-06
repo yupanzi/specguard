@@ -14,24 +14,29 @@ Spec-guarded AI workflow, distributed as a **Claude Code Plugin**. Four-phase lo
 
 ## Install
 
-> Replace `OWNER` with the actual GitHub owner once you fork / publish.
-
 ```bash
-# 1. Install the specguard CLI (the hook calls it at runtime)
-npm install -g @yupanzi/specguard
-
-# 2. Install the plugin in Claude Code
+# 1. Install the plugin in Claude Code
 /plugin marketplace add yupanzi/specguard
 /plugin install specguard
 
-# 3. Initialize in your project (preferred entry: slash command)
+# 2. Initialize in your project
+#    sg-init-project detects the specguard CLI on PATH; if missing, it
+#    asks once and runs the global install for you (npm / pnpm / yarn / bun).
 /specguard:sg-init-project
-# Skeleton-only mode (no project-specific notebook seed): specguard init
 ```
 
-`/specguard:sg-init-project` invokes `specguard init` (creates the `.specguard/{changes,notebook}/` skeleton with INDEX.md scaffolding for the K/S/C three libraries + writes `config.yaml` + maintains `.gitignore`), then scans the project (`README.md` / `CLAUDE.md` / metadata / `skills/` / `src/` layout) to extract project-specific K/S/C candidates and registers them under each library's INDEX (index-first protocol).
+`/specguard:sg-init-project` first ensures `specguard` is on PATH (auto-installing `@yupanzi/specguard` via the package manager you pick), then invokes `specguard init` (creates the `.specguard/{changes,notebook}/` skeleton with INDEX.md scaffolding for the K/S/C three libraries + writes `config.yaml` + maintains `.gitignore`), and finally scans the project (`README.md` / `CLAUDE.md` / metadata / `skills/` / `src/` layout) to extract project-specific K/S/C candidates and registers them under each library's INDEX (index-first protocol).
 
-Non-interactive skeleton mode: `specguard init --enforcement warn` (CLI only, no notebook seed).
+Want to install the CLI yourself first? Pick whichever package manager you use — the skill detects the existing binary and skips the install prompt:
+
+```bash
+npm install -g @yupanzi/specguard
+# pnpm add -g @yupanzi/specguard
+# yarn global add @yupanzi/specguard   # yarn classic (1.x); berry has no global
+# bun add -g @yupanzi/specguard
+```
+
+Non-interactive skeleton mode (assumes the CLI is already on PATH; no notebook seed): `specguard init --enforcement warn`.
 
 ## Usage
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /sg-ask-plan
 
-Requirement alignment + plan.yaml drafting. The entry point of the AI autonomous window.
+**Alignment phase** of the four-phase loop (KSC role: **K — Knowledge**). Requirement alignment + plan.yaml drafting. The entry point of the AI autonomous window.
 
 ## Kickoff — read priors (progressive disclosure)
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /sg-run-pipeline
 
-Task execution pipeline: subagent runs task → run check → self-heal until pass (max 3 attempts) → /simplify for entropy reduction.
+**Reasoning phase** of the four-phase loop (KSC role: **S — Skill**, applying decision templates). Task execution pipeline: subagent runs task → run check → self-heal until pass (max 3 attempts) → /simplify for entropy reduction.
 
 ## Preconditions
 

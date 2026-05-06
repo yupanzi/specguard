@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # /sg-sync-notebook
 
-Manually-triggered project memory distillation. **Never invoked automatically on approve.**
+**Distillation phase** of the four-phase loop (closes the loop by writing K/S/C lessons back into the notebook; not bound to a single library). Manually-triggered project memory distillation. **Never invoked automatically on approve.**
 
 ## Preconditions
 
@@ -26,6 +26,11 @@ Use the CLI helper `listVersions(dateId)` to get the full sorted version array:
 - All earlier versions = **negative material** (KSC / approve rejected; "don't do it this way" reference points)
 
 ### 3. LLM distills candidate assets
+
+**Two firewalls before extracting any candidate** (rules + rationale: CLAUDE.md Operating axioms § Notebook scope / Information-source boundary):
+
+1. **Scope test** — would this distilled fact survive `rm -rf changes/<dateId>` and help the *next* task? Sync-specific watch-out: distill the *project-level lesson*, not the event. ❌ "v1 attempt 2 failed because endpoint X returned 502" → ✅ "endpoint X is rate-limited on the free tier — back off or switch plan". The event is task scope; the lesson is project scope.
+2. **Source test** — for K candidates, anything inferred from logs / plan content that looks domain-specific (business rule, internal convention) MUST be surfaced in step 4 as an AskUserQuestion ("I observed X — is this a project-level rule?"), never silently admitted.
 
 Read every version's plan/pipeline/check.yaml + logs/. The LLM extracts three categories:
 
