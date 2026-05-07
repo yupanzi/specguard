@@ -1,64 +1,56 @@
-export type TaskStatus = 'pending' | 'in_progress' | 'pass' | 'fail'
+export type TaskStatus = 'pending' | 'running' | 'passed' | 'failed'
 export type CheckStatus = 'pending' | 'pass' | 'fail'
 export type KscStatus = 'pass' | 'fail' | 'skipped'
 
-export type Verdict =
-  | 'done'
-  | 're-run'
-  | 're-plan'
-  | 'awaiting-llm'
-  | 'ksc-rejected'
-  | 'approval-rejected'
+export type Verdict = 'done' | 're-plan' | 'ksc-reject' | 'awaiting-llm'
 
 export type HowCmd = { cmd: string[] }
 export type HowLlm = { llm: string }
 export type HowManual = { manual: string }
 export type How = HowCmd | HowLlm | HowManual
 
-export interface PlanCheck {
+export interface SpecCheck {
   id: string
   what: string
   how: How
 }
 
-export interface PlanTask {
-  id: string
-  do: string
-  verify: string
-}
-
-export interface PlanAsk {
+export interface SpecAsk {
   q: string
   a: string
   level?: 'blocker' | 'defer'
 }
 
-export interface PlanShape {
+export interface SpecShape {
   version: number
   id: string
   goal: string
-  asks: PlanAsk[]
-  checks: PlanCheck[]
-  tasks: PlanTask[]
+  asks: SpecAsk[]
+  checks: SpecCheck[]
 }
 
-export interface TaskResult {
+export interface PlanShape {
+  version: number
   id: string
+  files: string[]
+  approach: string
+  tradeoffs?: string
+}
+
+export interface TaskItem {
+  id: string
+  do: string
+  verify: string
   status: TaskStatus
-  started?: string
-  ended?: string
-  log?: string
+  result?: string
+  started_at?: string
+  finished_at?: string
 }
 
-export interface PipelineAttempt {
-  n: number
-  at: string
-  task_results: TaskResult[]
-}
-
-export interface PipelineShape {
+export interface TasksShape {
+  version: number
   id: string
-  attempts: PipelineAttempt[]
+  tasks: TaskItem[]
 }
 
 export interface CheckResult {
@@ -67,17 +59,21 @@ export interface CheckResult {
   evidence?: string
 }
 
-export interface CheckAttempt {
-  n: number
-  check_results: CheckResult[]
-  verdict: Verdict
-  approved?: boolean
-  ksc_check?: { status: KscStatus; evidence?: string }
+export interface KscCheck {
+  k?: string
+  s?: string
+  c?: string
+  status?: KscStatus
+  evidence?: string
 }
 
 export interface CheckShape {
+  version: number
   id: string
-  attempts: CheckAttempt[]
+  check_results: CheckResult[]
+  verdict: Verdict
+  signed_off?: boolean
+  ksc_check?: KscCheck
 }
 
 export type EnforcementLevel = 'strict' | 'warn' | 'off'
@@ -91,6 +87,8 @@ export interface ConfigShape {
 }
 
 export type NotebookLibrary = 'knowledge' | 'skill' | 'check'
+
+export type NotebookAxis = 'K' | 'S' | 'C'
 
 export type NotebookScope =
   | 'notebook'

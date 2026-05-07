@@ -99,7 +99,7 @@ export async function hookOnPromptSubmit(): Promise<number> {
   if (isAnyChangeBusy()) return 0
 
   console.error(
-    'specguard: detected new-feature intent but no state machine in progress; start with /specguard:sg-ask-plan to draft plan.yaml v1'
+    'specguard: detected new-feature intent but no state machine in progress; start with /specguard:sg-spec-ask to draft spec.yaml'
   )
   return decideExit(level)
 }

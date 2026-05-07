@@ -1,33 +1,33 @@
 import * as fs from 'fs'
 import {
   changesRoot,
-  loadPlan,
-  loadPipelineOptional,
+  loadSpecOptional,
+  loadPlanOptional,
+  loadTasksOptional,
   loadCheckOptional,
-  activeVersion,
   DATEID_PATTERN,
 } from './yaml-io'
-import type { PipelineShape, CheckShape, PlanShape } from './types'
+import type { TasksShape, CheckShape, SpecShape, PlanShape } from './types'
 
-export type PipelineStatus =
+export type TasksStatus =
   | { state: 'absent' }
-  | { state: 'in-progress'; attempt: number; failedTasks: string[] }
-  | { state: 'all-pass'; attempt: number }
-  | { state: 'has-failures'; attempt: number; failedTasks: string[] }
+  | { state: 'in-progress'; failedTasks: string[] }
+  | { state: 'all-pass' }
+  | { state: 'has-failures'; failedTasks: string[] }
 
-export type CheckStatus =
+export type CheckPhaseStatus =
   | { state: 'absent' }
-  | { state: 'verdict-only'; verdict: string; n: number }
-  | { state: 'approved'; n: number }
-  | { state: 'rejected'; n: number; verdict: string }
-  | { state: 'awaiting-approval'; n: number; verdict: string }
+  | { state: 'awaiting-llm'; verdict: string }
+  | { state: 'signed-off'; verdict: string }
+  | { state: 'rejected'; verdict: string }
+  | { state: 'awaiting-approval'; verdict: string }
 
 export interface ChangeStatus {
   dateId: string
-  version: number
+  spec: 'present' | 'missing'
   plan: 'present' | 'missing'
-  pipeline: PipelineStatus
-  check: CheckStatus
+  tasks: TasksStatus
+  check: CheckPhaseStatus
   nextHint: string
 }
 
@@ -44,75 +44,75 @@ function listChangeDirs(): string[] {
     .sort()
 }
 
-function derivePipelineStatus(p: PipelineShape | null): PipelineStatus {
-  if (!p || p.attempts.length === 0) return { state: 'absent' }
-  const last = p.attempts[p.attempts.length - 1]
-  const inFlight = last.task_results.filter(
-    (t) => t.status === 'pending' || t.status === 'in_progress'
+function deriveTasksStatus(t: TasksShape | null): TasksStatus {
+  if (!t || !Array.isArray(t.tasks) || t.tasks.length === 0)
+    return { state: 'absent' }
+  const inFlight = t.tasks.filter(
+    (x) => x.status === 'pending' || x.status === 'running'
   )
-  const failed = last.task_results
-    .filter((t) => t.status === 'fail')
-    .map((t) => t.id)
+  const failed = t.tasks
+    .filter((x) => x.status === 'failed')
+    .map((x) => x.id)
   if (inFlight.length > 0)
-    return { state: 'in-progress', attempt: last.n, failedTasks: failed }
-  if (failed.length === 0) return { state: 'all-pass', attempt: last.n }
-  return { state: 'has-failures', attempt: last.n, failedTasks: failed }
+    return { state: 'in-progress', failedTasks: failed }
+  if (failed.length === 0) return { state: 'all-pass' }
+  return { state: 'has-failures', failedTasks: failed }
 }
 
-function deriveCheckStatus(c: CheckShape | null): CheckStatus {
-  if (!c || c.attempts.length === 0) return { state: 'absent' }
-  const last = c.attempts[c.attempts.length - 1]
-  if (last.approved === true) return { state: 'approved', n: last.n }
-  if (last.verdict === 'approval-rejected' || last.verdict === 'ksc-rejected')
-    return { state: 'rejected', n: last.n, verdict: last.verdict }
-  if (last.verdict === 'done')
-    return { state: 'awaiting-approval', n: last.n, verdict: last.verdict }
-  return { state: 'verdict-only', verdict: last.verdict, n: last.n }
-}
-
-function nextHint(p: PipelineStatus, c: CheckStatus, hasPlan: boolean): string {
-  if (!hasPlan) return 'plan.yaml missing — re-run /specguard:sg-ask-plan'
-  if (p.state === 'absent') return 'pipeline not started — /specguard:sg-run-pipeline'
-  if (p.state === 'in-progress')
-    return `pipeline in progress (attempt ${p.attempt}) — resume with /specguard:sg-run-pipeline`
-  if (p.state === 'has-failures') {
-    if (p.attempt >= 3) return 'pipeline still failing after attempt 3 — open v2 (re-plan)'
-    return `pipeline attempt ${p.attempt} failed — /specguard:sg-run-pipeline to retry attempt ${p.attempt + 1}`
+function deriveCheckStatus(c: CheckShape | null): CheckPhaseStatus {
+  if (!c) return { state: 'absent' }
+  if (c.signed_off === true)
+    return { state: 'signed-off', verdict: c.verdict }
+  switch (c.verdict) {
+    case 're-plan':
+    case 'ksc-reject':
+      return { state: 'rejected', verdict: c.verdict }
+    case 'awaiting-llm':
+      return { state: 'awaiting-llm', verdict: c.verdict }
+    case 'done':
+      return { state: 'awaiting-approval', verdict: c.verdict }
   }
-  if (c.state === 'absent') return 'pipeline passed — /specguard:sg-sign-check'
-  if (c.state === 'approved') return 'approved — run /specguard:sg-sync-notebook (manual trigger)'
-  if (c.state === 'rejected') return `${c.verdict} — open v2 plan`
+}
+
+function nextHint(
+  hasSpec: boolean,
+  hasPlan: boolean,
+  t: TasksStatus,
+  c: CheckPhaseStatus
+): string {
+  if (!hasSpec) return 'spec.yaml missing — re-run /specguard:sg-spec-ask'
+  if (!hasPlan) return 'plan.yaml missing — /specguard:sg-plan-tasks'
+  if (t.state === 'absent') return 'tasks not started — /specguard:sg-plan-tasks'
+  if (t.state === 'in-progress')
+    return 'tasks in progress — resume with /specguard:sg-plan-tasks'
+  if (t.state === 'has-failures')
+    return `tasks failed: [${t.failedTasks.join(', ')}] — open new dateId to re-spec/re-plan`
+  if (c.state === 'absent') return 'tasks all-pass — /specguard:sg-check-guard'
+  if (c.state === 'signed-off')
+    return 'signed off — run /specguard:sg-sync-notebook (manual trigger)'
+  if (c.state === 'rejected')
+    return `${c.verdict} — open new dateId to re-spec/re-plan`
   if (c.state === 'awaiting-approval')
-    return 'check verdict=done — awaiting approve (finish /specguard:sg-sign-check)'
-  return 'check awaiting-llm — resume /specguard:sg-sign-check'
+    return 'check verdict=done — awaiting approve (finish /specguard:sg-check-guard)'
+  return `check awaiting-llm (${c.verdict}) — resume /specguard:sg-check-guard`
 }
 
 export function summarize(): StatusSummary {
   const changes: ChangeStatus[] = []
   for (const dateId of listChangeDirs()) {
-    let version: number
-    try {
-      version = activeVersion(dateId)
-    } catch {
-      continue
-    }
-    let plan: PlanShape | null = null
-    try {
-      plan = loadPlan(dateId, version) as PlanShape
-    } catch {
-      // plan missing
-    }
-    const pipeline = loadPipelineOptional(dateId, version) as PipelineShape | null
-    const check = loadCheckOptional(dateId, version) as CheckShape | null
-    const pStatus = derivePipelineStatus(pipeline)
+    const spec = loadSpecOptional(dateId) as SpecShape | null
+    const plan = loadPlanOptional(dateId) as PlanShape | null
+    const tasks = loadTasksOptional(dateId) as TasksShape | null
+    const check = loadCheckOptional(dateId) as CheckShape | null
+    const tStatus = deriveTasksStatus(tasks)
     const cStatus = deriveCheckStatus(check)
     changes.push({
       dateId,
-      version,
+      spec: spec ? 'present' : 'missing',
       plan: plan ? 'present' : 'missing',
-      pipeline: pStatus,
+      tasks: tStatus,
       check: cStatus,
-      nextHint: nextHint(pStatus, cStatus, !!plan),
+      nextHint: nextHint(!!spec, !!plan, tStatus, cStatus),
     })
   }
   return { changes }
@@ -120,49 +120,47 @@ export function summarize(): StatusSummary {
 
 export function isAnyChangeBusy(): boolean {
   for (const dateId of listChangeDirs()) {
-    let version: number
-    try {
-      version = activeVersion(dateId)
-    } catch {
-      continue
-    }
-    const pipeline = loadPipelineOptional(dateId, version) as PipelineShape | null
-    const pStatus = derivePipelineStatus(pipeline)
-    if (pStatus.state === 'in-progress' || pStatus.state === 'has-failures') {
+    const tasks = loadTasksOptional(dateId) as TasksShape | null
+    const tStatus = deriveTasksStatus(tasks)
+    if (tStatus.state === 'in-progress' || tStatus.state === 'has-failures') {
       return true
     }
-    const check = loadCheckOptional(dateId, version) as CheckShape | null
+    const check = loadCheckOptional(dateId) as CheckShape | null
     const cStatus = deriveCheckStatus(check)
-    if (cStatus.state === 'awaiting-approval') return true
+    if (
+      cStatus.state === 'awaiting-approval' ||
+      cStatus.state === 'awaiting-llm'
+    )
+      return true
   }
   return false
 }
 
-function formatPipelineStatus(p: PipelineStatus): string {
-  switch (p.state) {
+function formatTasksStatus(t: TasksStatus): string {
+  switch (t.state) {
     case 'absent':
       return 'absent'
     case 'in-progress':
-      return `in-progress (attempt ${p.attempt})`
+      return 'in-progress'
     case 'all-pass':
-      return `all-pass (attempt ${p.attempt})`
+      return 'all-pass'
     case 'has-failures':
-      return `failures: [${p.failedTasks.join(', ')}] (attempt ${p.attempt})`
+      return `failures: [${t.failedTasks.join(', ')}]`
   }
 }
 
-function formatCheckStatus(c: CheckStatus): string {
+function formatCheckStatus(c: CheckPhaseStatus): string {
   switch (c.state) {
     case 'absent':
       return 'absent'
-    case 'verdict-only':
-      return `verdict=${c.verdict} (attempt ${c.n})`
-    case 'approved':
-      return `approved (attempt ${c.n})`
+    case 'awaiting-llm':
+      return `verdict=${c.verdict}, awaiting-llm`
+    case 'signed-off':
+      return `signed-off (verdict=${c.verdict})`
     case 'rejected':
-      return `rejected: ${c.verdict} (attempt ${c.n})`
+      return `rejected: ${c.verdict}`
     case 'awaiting-approval':
-      return `verdict=${c.verdict}, awaiting approve (attempt ${c.n})`
+      return `verdict=${c.verdict}, awaiting approve`
   }
 }
 
@@ -172,10 +170,11 @@ export function formatSummary(s: StatusSummary): string {
   }
   const lines: string[] = ['specguard state machine in progress:']
   for (const c of s.changes) {
-    lines.push(`  ${c.dateId}/v${c.version}`)
-    lines.push(`    plan:     ${c.plan}`)
-    lines.push(`    pipeline: ${formatPipelineStatus(c.pipeline)}`)
-    lines.push(`    check:    ${formatCheckStatus(c.check)}`)
+    lines.push(`  ${c.dateId}`)
+    lines.push(`    spec:  ${c.spec}`)
+    lines.push(`    plan:  ${c.plan}`)
+    lines.push(`    tasks: ${formatTasksStatus(c.tasks)}`)
+    lines.push(`    check: ${formatCheckStatus(c.check)}`)
     lines.push(`    → ${c.nextHint}`)
   }
   return lines.join('\n')

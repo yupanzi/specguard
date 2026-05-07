@@ -1,16 +1,13 @@
-import Ajv from 'ajv'
+import Ajv, { ValidateFunction } from 'ajv'
 import * as fs from 'fs'
 import * as path from 'path'
 import {
-  loadPlan,
-  loadPipelineOptional,
+  loadSpecOptional,
+  loadPlanOptional,
+  loadTasksOptional,
   loadCheckOptional,
   parseDateId,
-  listVersions,
-  activeVersion,
-  planPath,
-  pipelinePath,
-  checkPath,
+  listTaskDirs,
   notebookRootIndexPath,
   notebookLibraryIndexPath,
   listNotebookTopicFiles,
@@ -20,28 +17,30 @@ import {
 } from '../lib/yaml-io'
 import { humanizeAjv, findDuplicates } from '../lib/errors'
 import type {
+  SpecShape,
   PlanShape,
-  PipelineShape,
+  TasksShape,
   CheckShape,
   NotebookAssetShape,
   IndexAssetShape,
   TopicAssetShape,
+  NotebookAxis,
   NotebookLibrary,
 } from '../lib/types'
+import specSchema from '../schemas/spec.schema.json'
 import planSchema from '../schemas/plan.schema.json'
-import pipelineSchema from '../schemas/pipeline.schema.json'
+import tasksSchema from '../schemas/tasks.schema.json'
 import checkSchema from '../schemas/check.schema.json'
 import notebookSchema from '../schemas/notebook-asset.schema.json'
 
 const ajv = new Ajv({ allErrors: true })
+const ajvSpec = ajv.compile<SpecShape>(specSchema)
 const ajvPlan = ajv.compile<PlanShape>(planSchema)
-const ajvPipeline = ajv.compile<PipelineShape>(pipelineSchema)
+const ajvTasks = ajv.compile<TasksShape>(tasksSchema)
 const ajvCheck = ajv.compile<CheckShape>(checkSchema)
 const ajvNotebook = ajv.compile<NotebookAssetShape>(notebookSchema)
 
-const MAX_ATTEMPTS = 3
-
-const AXIS_BY_LIBRARY: Record<NotebookLibrary, 'K' | 'S' | 'C'> = {
+const AXIS_BY_LIBRARY: Record<NotebookLibrary, NotebookAxis> = {
   knowledge: 'K',
   skill: 'S',
   check: 'C',
@@ -56,41 +55,18 @@ function prefix(label: string, errs: string[]): string[] {
   return errs.map((e) => `[${label}] ${e}`)
 }
 
-function checkMonotonicN(
-  attempts: { n: number }[],
-  label: string
-): string[] {
-  const errors: string[] = []
-  for (let i = 1; i < attempts.length; i++) {
-    if (attempts[i].n < attempts[i - 1].n) {
-      errors.push(
-        `[${label}] attempts[${i}].n=${attempts[i].n} < attempts[${i - 1}].n=${attempts[i - 1].n} (must be non-decreasing)`
-      )
-    }
+function loadAndValidateOptional<T>(
+  raw: unknown | null,
+  validator: ValidateFunction<T>,
+  label: string,
+  errors: string[]
+): T | null {
+  if (raw === null) return null
+  if (!validator(raw)) {
+    errors.push(...prefix(label, humanizeAjv(validator.errors ?? [])))
+    return null
   }
-  return errors
-}
-
-function checkFreezeIntegrity(dateId: string): string[] {
-  const versions = listVersions(dateId)
-  if (versions.length <= 1) return []
-  const errors: string[] = []
-  const latest = versions[versions.length - 1]
-  for (const v of versions.slice(0, -1)) {
-    for (const [name, fn] of [
-      ['plan.yaml', planPath],
-      ['pipeline.yaml', pipelinePath],
-      ['check.yaml', checkPath],
-    ] as const) {
-      const p = fn(dateId, v)
-      if (!fs.existsSync(p)) {
-        errors.push(
-          `[freeze] frozen v${v} missing ${name}; v${v}/ must keep all three (plan/pipeline/check) when v${latest} exists`
-        )
-      }
-    }
-  }
-  return errors
+  return raw as T
 }
 
 function parseNotebookAsset(
@@ -247,6 +223,73 @@ export function validateNotebook(): string[] {
   return errors
 }
 
+function validateCrossFiles(
+  parsedId: string,
+  spec: SpecShape,
+  plan: PlanShape | null,
+  tasks: TasksShape | null,
+  check: CheckShape | null
+): string[] {
+  const errors: string[] = []
+
+  if (spec.id !== parsedId) {
+    errors.push(
+      `[spec] id "${spec.id}" does not match parsed id from dateId "${parsedId}"`
+    )
+  }
+  if (plan && plan.id !== parsedId) {
+    errors.push(`[plan] id "${plan.id}" does not match parsed id "${parsedId}"`)
+  }
+  if (tasks && tasks.id !== parsedId) {
+    errors.push(
+      `[tasks] id "${tasks.id}" does not match parsed id "${parsedId}"`
+    )
+  }
+  if (check && check.id !== parsedId) {
+    errors.push(`[check] id "${check.id}" does not match parsed id "${parsedId}"`)
+  }
+
+  const checkIds = new Set(spec.checks.map((c) => c.id))
+  if (tasks) {
+    for (const t of tasks.tasks) {
+      if (!checkIds.has(t.verify)) {
+        errors.push(
+          `[tasks] tasks[id=${t.id}].verify references unknown spec.checks.id: "${t.verify}"`
+        )
+      }
+    }
+  }
+  if (check) {
+    for (const cr of check.check_results) {
+      if (!checkIds.has(cr.id)) {
+        errors.push(
+          `[check] check_results.id "${cr.id}" not in spec.checks`
+        )
+      }
+    }
+  }
+
+  return errors
+}
+
+function checkOrphanTaskDirs(
+  dateId: string,
+  tasks: TasksShape | null
+): string[] {
+  const dirs = listTaskDirs(dateId)
+  if (dirs.length === 0) return []
+  const errors: string[] = []
+  const known = new Set(tasks?.tasks.map((t) => t.id) ?? [])
+  for (const d of dirs) {
+    if (!known.has(d)) {
+      errors.push(
+        `[tasks] orphan task directory: tasks/${d}/ has no matching entry in tasks.yaml`
+      )
+    }
+  }
+  return errors
+}
+
 export function validate(dateId: string): ValidateResult {
   let parsedId: string
   try {
@@ -255,104 +298,46 @@ export function validate(dateId: string): ValidateResult {
     return { ok: false, errors: [(e as Error).message] }
   }
 
-  let version: number
-  try {
-    version = activeVersion(dateId)
-  } catch (e) {
-    return { ok: false, errors: [(e as Error).message] }
+  const specRaw = loadSpecOptional(dateId)
+  if (specRaw === null) {
+    return {
+      ok: false,
+      errors: [`[spec] spec.yaml not found for dateId ${dateId}`],
+    }
   }
+  if (!ajvSpec(specRaw)) {
+    return { ok: false, errors: prefix('spec', humanizeAjv(ajvSpec.errors ?? [])) }
+  }
+  const spec = specRaw as SpecShape
 
-  let plan: unknown
-  try {
-    plan = loadPlan(dateId, version)
-  } catch (e) {
-    return { ok: false, errors: [(e as Error).message] }
-  }
-
-  if (!ajvPlan(plan)) {
-    return { ok: false, errors: prefix('plan', humanizeAjv(ajvPlan.errors ?? [])) }
-  }
-  const p = plan as PlanShape
   const errors: string[] = []
+  errors.push(...prefix('spec', findDuplicates(spec.asks, 'q', 'asks')))
+  errors.push(...prefix('spec', findDuplicates(spec.checks, 'id', 'checks')))
 
-  if (p.id !== parsedId) {
-    errors.push(
-      `[plan] id "${p.id}" does not match parsed id from dateId "${parsedId}"`
-    )
+  const plan = loadAndValidateOptional<PlanShape>(
+    loadPlanOptional(dateId),
+    ajvPlan,
+    'plan',
+    errors
+  )
+  const tasks = loadAndValidateOptional<TasksShape>(
+    loadTasksOptional(dateId),
+    ajvTasks,
+    'tasks',
+    errors
+  )
+  if (tasks) {
+    errors.push(...prefix('tasks', findDuplicates(tasks.tasks, 'id', 'tasks')))
   }
+  const check = loadAndValidateOptional<CheckShape>(
+    loadCheckOptional(dateId),
+    ajvCheck,
+    'check',
+    errors
+  )
 
-  errors.push(...prefix('plan', findDuplicates(p.asks, 'q', 'asks')))
-  errors.push(...prefix('plan', findDuplicates(p.checks, 'id', 'checks')))
-  errors.push(...prefix('plan', findDuplicates(p.tasks, 'id', 'tasks')))
-
-  const checkIds = new Set(p.checks.map((c) => c.id))
-  for (const t of p.tasks) {
-    if (!checkIds.has(t.verify)) {
-      errors.push(
-        `[plan] tasks[id=${t.id}].verify references unknown check: "${t.verify}"`
-      )
-    }
-  }
-
-  errors.push(...checkFreezeIntegrity(dateId))
-
-  const pipelineRaw = loadPipelineOptional(dateId, version)
-  if (pipelineRaw !== null) {
-    if (!ajvPipeline(pipelineRaw)) {
-      errors.push(...prefix('pipeline', humanizeAjv(ajvPipeline.errors ?? [])))
-    } else {
-      const pipeline = pipelineRaw as PipelineShape
-      if (pipeline.id !== parsedId) {
-        errors.push(
-          `[pipeline] id "${pipeline.id}" does not match parsed id "${parsedId}"`
-        )
-      }
-      errors.push(...checkMonotonicN(pipeline.attempts, 'pipeline'))
-      if (pipeline.attempts.length > MAX_ATTEMPTS) {
-        errors.push(
-          `[pipeline] attempts.length=${pipeline.attempts.length} exceeds MAX_ATTEMPTS=${MAX_ATTEMPTS}`
-        )
-      }
-      const planTaskIds = new Set(p.tasks.map((t) => t.id))
-      for (const a of pipeline.attempts) {
-        for (const tr of a.task_results) {
-          if (!planTaskIds.has(tr.id)) {
-            errors.push(
-              `[pipeline] attempts[n=${a.n}].task_results.id "${tr.id}" not in plan.tasks`
-            )
-          }
-        }
-      }
-    }
-  }
-
-  const checkRaw = loadCheckOptional(dateId, version)
-  if (checkRaw !== null) {
-    if (!ajvCheck(checkRaw)) {
-      errors.push(...prefix('check', humanizeAjv(ajvCheck.errors ?? [])))
-    } else {
-      const c = checkRaw as CheckShape
-      if (c.id !== parsedId) {
-        errors.push(`[check] id "${c.id}" does not match parsed id "${parsedId}"`)
-      }
-      errors.push(...checkMonotonicN(c.attempts, 'check'))
-      if (c.attempts.length > MAX_ATTEMPTS) {
-        errors.push(
-          `[check] attempts.length=${c.attempts.length} exceeds MAX_ATTEMPTS=${MAX_ATTEMPTS}`
-        )
-      }
-      const planCheckIds = new Set(p.checks.map((x) => x.id))
-      for (const a of c.attempts) {
-        for (const cr of a.check_results) {
-          if (!planCheckIds.has(cr.id)) {
-            errors.push(
-              `[check] attempts[n=${a.n}].check_results.id "${cr.id}" not in plan.checks`
-            )
-          }
-        }
-      }
-    }
-  }
+  errors.push(...validateCrossFiles(parsedId, spec, plan, tasks, check))
+  errors.push(...checkOrphanTaskDirs(dateId, tasks))
 
   return { ok: errors.length === 0, errors }
 }

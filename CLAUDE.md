@@ -9,8 +9,8 @@
 
 **The spec is a state machine in YAML; the AI autonomous window is bounded by slash commands; the CLI never touches the LLM; the plugin welds the state machine into Claude Code's runtime.**
 
-The four-phase loop `/specguard:sg-ask-plan → /specguard:sg-run-pipeline → /specguard:sg-sign-check → /specguard:sg-sync-notebook` is a non-skippable state transition.
-Every step produces verifiable YAML artifacts (`plan.yaml` / `pipeline.yaml` / `check.yaml`) plus distillable notebook assets (the K/S/C three libraries).
+The four-phase loop `/specguard:sg-spec-ask → /specguard:sg-plan-tasks → /specguard:sg-check-guard → /specguard:sg-sync-notebook` is a non-skippable state transition.
+Every step produces verifiable YAML artifacts (`spec.yaml` / `plan.yaml` / `tasks.yaml` / `check.yaml`) plus distillable notebook assets (the K/S/C three libraries).
 **Files are the state machine**: no database, no in-memory state, restart and you recover.
 
 specguard is distributed as a **Claude Code Plugin**: the repo root is the plugin root; `.claude-plugin/plugin.json` + `skills/` + `hooks/` are the plugin trinity; packages/cli is the plugin's execution backend (hook scripts only exec the specguard CLI).
@@ -22,23 +22,23 @@ specguard is distributed as a **Claude Code Plugin**: the repo root is the plugi
 All specguard mechanisms exist to serve these 6 axioms; the KSC three libraries are merely the landing layer:
 
 1. **Knowledge must be understood** — K library carries `## Abstractions` + Why footnotes, not a fact list
-2. **Requirements must be aligned** — sg-ask-plan AskUserQuestion ≤ 4/batch; flush each answer to plan.yaml immediately
-3. **Decisions must be explainable** — S library decision templates carry Why; ksc_check.evidence ≤ 3 sentences/library
+2. **Requirements must be aligned** — sg-spec-ask AskUserQuestion ≤ 4/batch; flush each answer to spec.yaml immediately
+3. **Decisions must be explainable** — S library decision templates carry Why; ksc_check evidence ≤ 3 sentences/library
 4. **Experience must be reused** — notebook persists across tasks; survives `rm -rf changes/<dateId>`
-5. **Constraints must be tractable** — check.how priority cmd > llm > manual; loop ≤ 3; v1/v2 version split
+5. **Constraints must be tractable** — check.how priority cmd > llm > manual; one-shot execution (no retry); failure → new dateId
 6. **Evaluation must be verifiable** — C library cmd/llm/manual triad; non-verifiable "constraints" don't enter the library
 
-| K/S/C (schema) | Phase (SKILL.md)              | Semantics (design) |
-|----------------|-------------------------------|--------------------|
-| **K** Knowledge | Alignment (`sg-ask-plan`)     | Facts              |
-| **S** Skill     | Reasoning (`sg-run-pipeline`) | Decisions          |
-| **C** Check     | Evaluation (`sg-sign-check`)  | Constraints        |
+| K/S/C (schema) | Phase (SKILL.md)                | YAML artifact | Semantics (design) |
+|----------------|---------------------------------|---------------|--------------------|
+| **K** Knowledge | Alignment (`sg-spec-ask`)       | spec.yaml     | Facts              |
+| **S** Skill     | Reasoning (`sg-plan-tasks`)     | plan.yaml + tasks.yaml | Decisions  |
+| **C** Check     | Evaluation (`sg-check-guard`)   | check.yaml    | Constraints        |
 
-The fourth phase **Distillation** (`/specguard:sg-sync-notebook`) closes the loop — it writes the run's lessons back into K/S/C; it doesn't bind to a single library, so it lives outside the table.
+The fourth phase **Distillation** (`/specguard:sg-sync-notebook`) closes the loop — it writes the run's lessons back into K/S/C; it doesn't bind to a single library, so it lives outside the table. This skill ALSO handles the bootstrap path (when notebook is empty, scan project to seed first-batch K/S/C topics) — there's no separate `sg-init-project` skill.
 
-**Notebook scope is project, not task.** A line earns a K/S/C entry only if it survives task deletion: ask "would this still be useful after `rm -rf changes/<dateId>`?" — yes → notebook (K/S/C); no → plan.yaml. Task-specific spec details (e.g. "this dateId implements OAuth with Google as the provider") belong to plan.yaml; project-level invariants (e.g. "the four-phase loop is non-skippable", "CLI never calls LLM") belong to K.
+**Notebook scope is project, not task.** A line earns a K/S/C entry only if it survives task deletion: ask "would this still be useful after `rm -rf changes/<dateId>`?" — yes → notebook (K/S/C); no → spec/plan/tasks.yaml. Task-specific spec details (e.g. "this dateId implements OAuth with Google as the provider") belong to spec.yaml; project-level invariants (e.g. "the four-phase loop is non-skippable", "CLI never calls LLM") belong to K.
 
-**Information-source boundary for K.** Domain-specific facts (business rules, internal terminology, project-specific conventions) MUST be user-provided. AI-inferred domain knowledge is rejected. Generic knowledge (language/framework facts queryable in public docs) may be AI-suggested but still requires user confirmation via AskUserQuestion before admission. The danger: LLMs hallucinate domain rules fluently and convincingly — once they pollute K, every downstream sg-sign-check uses a corrupted baseline.
+**Information-source boundary for K.** Domain-specific facts (business rules, internal terminology, project-specific conventions) MUST be user-provided. AI-inferred domain knowledge is rejected. Generic knowledge (language/framework facts queryable in public docs) may be AI-suggested but still requires user confirmation via AskUserQuestion before admission. The danger: LLMs hallucinate domain rules fluently and convincingly — once they pollute K, every downstream sg-check-guard uses a corrupted baseline.
 
 Letters K/S/C are locked by schema; the three semantic layers coexist — pick by audience: schema / ref_id / file paths use K/S/C; each loop SKILL.md flags its phase up front (Alignment / Reasoning / Evaluation / Distillation), so phase names are the right shorthand for design discussion of the loop; internal trade-off discussions use Facts/Decisions/Constraints.
 
@@ -57,7 +57,7 @@ All LLM inference must happen inside slash commands or subagents.
 
 ### 2. The schema is frozen, `additionalProperties: false`
 
-Authoritative files: `packages/cli/src/schemas/{plan,pipeline,check,notebook-asset,config}.schema.json`
+Authoritative files: `packages/cli/src/schemas/{spec,plan,tasks,check,notebook-asset,config}.schema.json`
 Fields not listed there are rejected by AJV. **Want to add a field? Argue with the user first**, then change in three places consistently: schema → `lib/types.ts` types → the relevant slash command / CLI templates.
 **Reason**: minimum-fields-only; expansion requires justification. Redundant fields are the start of cognitive rot.
 
@@ -65,11 +65,11 @@ Fields not listed there are rejected by AJV. **Want to add a field? Argue with t
 
 ### 3. The state machine is non-skippable
 
-- `/sg-sign-check` MUST explicitly AskUserQuestion `[y/N]` for approve, with verdict ∈ `{done}` (no silent approve)
-- The skill frontmatter MUST set `disable-model-invocation: true` to prevent the LLM from "deciding for itself" mid-conversation to skip ask-plan and jump straight to run-pipeline
-- `attempt n` is monotonically non-decreasing (`validate.ts:checkMonotonicN`)
-- Once v1 is frozen, only append v2/, never touch v1 (`validate.ts:checkFreezeIntegrity`)
-- Loop ceiling 3: `pipeline.attempts.length ≤ 3` and `check.attempts.length ≤ 3`; violations error out
+- `/sg-check-guard` MUST explicitly AskUserQuestion `[y/N]` for approve, with `signed_off=true` only set after explicit yes (no silent approve)
+- The skill frontmatter MUST set `disable-model-invocation: true` to prevent the LLM from "deciding for itself" mid-conversation to skip spec-ask and jump straight to plan-tasks
+- Cross-file id integrity: `spec.id == plan.id == tasks.id == check.id` (validate.ts:validateCrossFiles)
+- Cross-file ref integrity: `tasks.tasks[].verify ∈ spec.checks[].id`; `check.check_results[].id ∈ spec.checks[].id`
+- No orphan task directories: every `tasks/<id>/` must have a matching `tasks.yaml.tasks[].id` (validate.ts:checkOrphanTaskDirs)
 
 ### 4. `check.how` is a one-of YAML object (exactly 1 property)
 
@@ -83,7 +83,7 @@ The spec model = clean entrypoint + script fallback: for pipe / chain / substitu
 
 ### 5. Status changes flush immediately
 
-Every status change in `pipeline.yaml` / `check.yaml` is written to disk on the spot.
+Every status change in `tasks.yaml` / `check.yaml` is written to disk on the spot.
 **Reason**: recoverable-on-unexpected-exit is the default behavior, not a nice-to-have.
 
 ### 6. Skills and docs stay technology-stack-agnostic
@@ -118,54 +118,56 @@ hooks/
     ├── on-session-start.sh
     └── on-prompt-submit.sh
 skills/                               # ⚠️ MUST be the <name>/SKILL.md subdirectory layout; the plugin auto-namespaces them as /specguard:<name>
-├── sg-init-project/SKILL.md          # project bootstrap entry; outside the state machine (orthogonal to the four-phase loop)
-├── sg-ask-plan/SKILL.md
-├── sg-run-pipeline/SKILL.md
-├── sg-sign-check/SKILL.md
-└── sg-sync-notebook/SKILL.md
+├── sg-spec-ask/SKILL.md             # K — Alignment phase; produces spec.yaml
+├── sg-plan-tasks/SKILL.md           # S — Reasoning phase; produces plan.yaml + tasks.yaml + tasks/<id>/{prompt.md, debug.log}
+├── sg-check-guard/SKILL.md          # C — Evaluation phase; produces check.yaml + signed_off
+└── sg-sync-notebook/SKILL.md        # Distillation phase; ALSO bootstrap (init mode when notebook empty)
 
 packages/cli/src/
 ├── index.ts                         # commander entry; subcommands: validate / verify / init / config / hook
 ├── commands/
-│   ├── validate.ts                  # schema + reference integrity + n monotonicity + attempts.length ≤ 3 + freeze integrity
+│   ├── validate.ts                  # schema + cross-file id/ref integrity + orphan task dir check + notebook integrity
 │   ├── verify.ts                    # spawn how.cmd as an array (no shell); llm / manual stay pending; writes check.yaml
 │   ├── init.ts                      # project init: readline picks enforcement + builds .specguard/ skeleton + writes config.yaml + maintains .gitignore (idempotent append of .specguard/changes/ exclusion; doesn't create .gitignore if the project lacks one)
 │   ├── config.ts                    # config get / set; ajv-validates before write
 │   └── hook.ts                      # three hook handlers: read stdin JSON + read config + decide exit code per enforcement
 ├── lib/
-│   ├── yaml-io.ts                   # path helpers (dateId, version, configPath, notebookDir, notebookRootIndexPath, notebookLibraryIndexPath, notebookTopicPath) + parseDateId + activeVersion + listVersions + readNotebookFrontmatter + parseRefId + NOTEBOOK_LIBRARIES + listNotebookTopicFiles
+│   ├── yaml-io.ts                   # path helpers (specPath, planPath, tasksPath, checkPath, taskDir, taskPromptPath, taskDebugLogPath, configPath, notebookDir, notebookRootIndexPath, notebookLibraryIndexPath, notebookTopicPath) + parseDateId + listTaskDirs + readNotebookFrontmatter + parseRefId + NOTEBOOK_LIBRARIES + listNotebookTopicFiles
 │   ├── config.ts                    # readConfig / writeConfig / effectiveEnforcement / defaultConfig
-│   ├── status.ts                    # summarize() walks changes/ to derive plan/pipeline/check status + nextHint
+│   ├── status.ts                    # summarize() walks changes/ to derive spec/plan/tasks/check status + nextHint
 │   ├── how.ts                       # check.how 3-form dispatch (cmd array / llm / manual)
-│   ├── types.ts                     # PlanShape / PipelineShape / CheckShape / ConfigShape / EnforcementLevel / HookName / NotebookAssetShape (IndexAssetShape | TopicAssetShape, discriminated by kind) / NotebookLibrary / NotebookScope / IndexReference
+│   ├── types.ts                     # SpecShape / PlanShape / TasksShape / CheckShape / ConfigShape / EnforcementLevel / HookName / NotebookAssetShape (IndexAssetShape | TopicAssetShape, discriminated by kind) / NotebookLibrary / NotebookScope / IndexReference
 │   └── errors.ts                    # AJV-error humanization
 └── schemas/                         # ⚠️ change here = change the contract; argue with the user first
+    ├── spec.schema.json
     ├── plan.schema.json
-    ├── pipeline.schema.json
+    ├── tasks.schema.json
     ├── check.schema.json
     ├── config.schema.json           # enforcement + per-hook overrides
     └── notebook-asset.schema.json   # markdown frontmatter; kind: index | topic discriminator + conditional required (index → references; topic → ref_id + library); scope enum 4 values
 
 packages/cli/test/                    # node:test unit tests (zero-dep; runs against dist/ as commonjs)
-├── _helpers.js                      # enterTmp / leaveTmp / writeYaml / HAPPY_PLAN_TEMPLATE + writeNotebookFile / defaultRootIndexFm / defaultLibraryIndexFm / defaultTopicFm / seedHealthyNotebook
+├── _helpers.js                      # enterTmp / leaveTmp / writeYaml / writeTaskDebug / HAPPY_SPEC_TEMPLATE / HAPPY_PLAN_TEMPLATE / HAPPY_TASKS_TEMPLATE / seedHealthyChange + writeNotebookFile / defaultRootIndexFm / defaultLibraryIndexFm / defaultTopicFm / seedHealthyNotebook
 ├── lib/how.test.js                  # parseHow dispatch
 └── commands/
-    ├── validate.test.js             # schema + business rules; includes regression for "empty cmd / both keys / non-object how → exactly one precise error"
+    ├── validate.test.js             # schema + cross-file integrity + orphan task dirs + notebook integrity
     └── verify.test.js               # spawn path + verdict; includes regression for "&& is a literal arg, not interpreted (no shell)"
 
 .specguard/                           # ⚠️ structure under user projects; this repo also self-hosts using it
 ├── config.yaml                      # created by init; enforcement (strict|warn|off) + per-hook overrides
-├── changes/{YYYYMMDD}-<id>/         # in-progress (dateId = directory name)
-│   ├── v1/                          # frozen on KSC / approve reject (plan/pipeline/check + logs untouched)
-│   │   ├── plan.yaml pipeline.yaml check.yaml
-│   │   └── logs/r<n>/<task_id>.log  # one directory per attempt (max r3)
-│   └── v2/                          # parallel new version under the same dateId
-│       └── ...
+├── changes/{YYYYMMDD}-<id>/         # in-progress (dateId = directory name) — flat, no version subdirs
+│   ├── spec.yaml                    # goal + asks + checks (with how)
+│   ├── plan.yaml                    # files + approach + tradeoffs
+│   ├── tasks.yaml                   # tasks definition + status (no attempts)
+│   ├── check.yaml                   # check_results + verdict + signed_off + ksc_check
+│   └── tasks/<task_id>/             # per-task subagent products (no r<n> attempt subdirs)
+│       ├── prompt.md                # original prompt sent to the subagent
+│       └── debug.log                # subagent execution output
 └── notebook/                        # KSC project memory (committed to git; not ignored); INDEX-first three-tier (progressive disclosure)
     ├── INDEX.md                     # Top-level entry (fixed template, scope: notebook); @ links to the three library INDEXes
     ├── knowledge/
     │   ├── INDEX.md                 # K library entry: ## Invariants + ## Abstractions + ## Topics + frontmatter references[]
-    │   └── <topic>.md               # Dense topic (ref_id K-NN; fetched on demand by ask-plan when an Invariant / Abstraction / trigger matches)
+    │   └── <topic>.md               # Dense topic (ref_id K-NN; fetched on demand by spec-ask when an Invariant / Abstraction / trigger matches)
     ├── skill/
     │   ├── INDEX.md                 # S library entry: ## Decision Triggers + ## Topics + references[]
     │   └── <topic>.md               # Decision templates / reasoning frameworks / workflows (ref_id S-NN)
@@ -174,23 +176,24 @@ packages/cli/test/                    # node:test unit tests (zero-dep; runs aga
         └── <topic>.md               # Correctness criteria: cmd / llm yes-no / manual checklist / self-test framework (ref_id C-NN)
 ```
 
-**Core YAML ↔ skill 1:1 mapping**: plan.yaml ↔ /specguard:sg-ask-plan / pipeline.yaml ↔ /specguard:sg-run-pipeline / check.yaml ↔ /specguard:sg-sign-check (verify CLI writes first, then /specguard:sg-sign-check appends ksc_check + approved).
+**Core YAML ↔ skill mapping**: spec.yaml ↔ /specguard:sg-spec-ask / plan.yaml + tasks.yaml ↔ /specguard:sg-plan-tasks / check.yaml ↔ /specguard:sg-check-guard (the verify CLI is invoked from inside sg-plan-tasks at the end of execution, writing check_results + initial verdict; sg-check-guard then reviews and adds ksc_check + signed_off).
 
-**`/specguard:sg-init-project` writes no YAML** — a project bootstrap action outside the state machine; output goes to `.specguard/notebook/<library>/<topic>.md` (project-specific KSC seed) AND updates the corresponding `<library>/INDEX.md.references` (index-first protocol; topic files without an INDEX entry are flagged as orphans by `validate.ts:validateNotebook`). The topic frontmatter uses fixed `source_change_id: project-init`. INDEX files are written by `specguard init` with `source_change_id: notebook-index` and never overwritten on re-init (idempotent, even with `--force`; protects user edits).
+**`/specguard:sg-sync-notebook` writes no per-dateId YAML** — its output goes to `.specguard/notebook/<library>/<topic>.md` (project KSC) AND updates the corresponding `<library>/INDEX.md.references` (index-first protocol; topic files without an INDEX entry are flagged as orphans by `validate.ts:validateNotebook`). Init-path topic frontmatter uses fixed `source_change_id: project-init`; sync-path topic frontmatter uses `source_change_id: <plan.id>` of the dateId being distilled. INDEX files are written by `specguard init` with `source_change_id: notebook-index` and never overwritten on re-init (idempotent, even with `--force`; protects user edits).
 
-**Hook ↔ state-machine mapping**: `yaml-write` runs validate after a YAML under .specguard/changes/ is written; `session-start` injects `lib/status.ts:summarize()` output at session start (so the LLM knows where on the grid it stands); `prompt-submit` detects intent keywords and, when no in-progress change exists, nudges the user toward sg-ask-plan.
+**Hook ↔ state-machine mapping**: `yaml-write` runs validate after a YAML under .specguard/changes/ is written; `session-start` injects `lib/status.ts:summarize()` output at session start (so the LLM knows where on the grid it stands); `prompt-submit` detects intent keywords and, when no in-progress change exists, nudges the user toward sg-spec-ask.
 
 ---
 
 ## Collaboration conventions
 
 - **Aggressive rewrite over compatibility patches**: philosophy-level refactors default to wipe-and-rebuild; old code is form-only reference. No `@deprecated`, no `// removed: ...` shadow code.
-- **Subagent isolation**: each task in `/sg-run-pipeline` runs in its own subagent to prevent context collapse.
-- **Subagent self-check when stuck**: same error ≥ 3 times or thinking in circles → fail proactively, don't push through.
-- **AskUserQuestion ≤ 4 per batch**: split when exceeding; each answer flushes back to plan.yaml immediately (so an unexpected exit doesn't lose answers).
+- **Subagent isolation**: each task in `/sg-plan-tasks` runs in its own subagent to prevent context collapse.
+- **Subagent self-check when stuck**: same error ≥ 3 times or thinking in circles → fail proactively, don't push through. Note: the skill-level retry mechanism is gone; subagent failure goes straight to `tasks.tasks[].status=failed`, then sg-check-guard routes to re-plan.
+- **AskUserQuestion ≤ 4 per batch**: split when exceeding; each answer flushes back to the relevant yaml immediately (so an unexpected exit doesn't lose answers).
 - **LLM judge: strict yes/no + ≤ 3 evidence sentences**: fuzzy cases lean strict (conservative — prefer over-failing).
-- **KSC three-axis review**: at sg-sign-check time the LLM judges from K (does it violate the project map's abstractions / invariants / concept relations?), S (does it conflict with the project's way of thinking about this class of problem? decision templates), C (which correctness criterion from the C library got missed?). Evidence is segmented per axis. Each library owns its segment: K is "what the project looks like", S is "how to think", C is "how to tell right from wrong".
-- **/specguard:sg-sync-notebook MUST be triggered manually**: never auto-invoke at approve.
+- **KSC three-axis review**: at sg-check-guard time the LLM judges from K (does it violate the project map's abstractions / invariants / concept relations?), S (does it conflict with the project's way of thinking about this class of problem? decision templates), C (which correctness criterion from the C library got missed?). Evidence is segmented per axis. Each library owns its segment: K is "what the project looks like", S is "how to think", C is "how to tell right from wrong".
+- **/specguard:sg-sync-notebook MUST be triggered manually**: never auto-invoke at signed_off.
+- **Failure → new dateId, not retry**: when a dateId fails (verdict=re-plan / ksc-reject), do NOT modify its files further. Open a fresh dateId via `/sg-spec-ask` (e.g. `<today>-<id>-v2`). The old dateId stays as a counter-example archive.
 - **Modifying `hooks/hooks.json` = changing the plugin interface contract**: tell the user first.
 - **Modifying `config.schema.json` = changing the enforcement contract**: tell the user first.
 - **Don't lightly tune enforcement defaults**: default `warn`, `prompt-submit` auto-downgrades to warn under strict — these are deliberated safe defaults; ask before changing.
@@ -201,64 +204,68 @@ packages/cli/test/                    # node:test unit tests (zero-dep; runs aga
 
 ### 1. `skills/` MUST use the subdirectory layout
 
-- ❌ `skills/sg-ask-plan.md` (loose files are **silently ignored** by Claude Code — the most dangerous failure mode: you think it's loaded, it isn't)
-- ✅ `skills/sg-ask-plan/SKILL.md` (directory + fixed uppercase filename)
+- ❌ `skills/sg-spec-ask.md` (loose files are **silently ignored** by Claude Code — the most dangerous failure mode: you think it's loaded, it isn't)
+- ✅ `skills/sg-spec-ask/SKILL.md` (directory + fixed uppercase filename)
 
-Note: under the plugin model, the path is `skills/` at the plugin root, not `.claude/skills/`. Once loaded, the namespace becomes `/specguard:sg-ask-plan` etc.
+Note: under the plugin model, the path is `skills/` at the plugin root, not `.claude/skills/`. Once loaded, the namespace becomes `/specguard:sg-spec-ask` etc.
 
 Authority: `https://code.claude.com/docs/en/custom-skills.md`
 
 ### 2. Skills MUST set `disable-model-invocation: true`
 
-Otherwise the LLM, seeing context like "ok let's do it", may skip `/specguard:sg-ask-plan` and jump straight into `/specguard:sg-run-pipeline`, breaking the state machine contract. The frontmatter must declare it explicitly.
+Otherwise the LLM, seeing context like "ok let's do it", may skip `/specguard:sg-spec-ask` and jump straight into `/specguard:sg-plan-tasks`, breaking the state machine contract. The frontmatter must declare it explicitly.
 
 The `prompt-submit` hook is a **runtime backstop** for this rule — even if the LLM tries to bypass, the hook reminds (or blocks, depending on enforcement) when intent keywords match.
 
 ### 3. Schema `additionalProperties: false` is intentional
 
-Newcomers seeing plan.yaml often want to add `metadata` / `tags` / `notes` fields.
+Newcomers seeing spec.yaml often want to add `metadata` / `tags` / `notes` fields.
 **The answer is uniformly NO**: argue first, change the schema first.
 
-### 4. After v1 freezes, only append v2/, never touch v1
+### 4. Failure → new dateId, never retry within current dateId
 
-When KSC or approve rejects, v1/{plan,pipeline,check}.yaml + logs/ MUST stay byte-identical. The new plan opens `v2/` under the same dateId (**don't create a new top-level dateId directory**). validate enforces this: when v2 exists, v1's three artifacts must all be present; missing one = reject.
+When sg-check-guard returns verdict=`re-plan` or `ksc-reject`, the current `changes/<dateId>/` is not modified further. Open a NEW dateId via `/sg-spec-ask` for the redesign. Old dateIds stay on disk as counter-examples; they're useful inputs to `/sg-sync-notebook` distillation. Do not edit a sealed dateId in place — it ruins the failure archive.
 
-### 5. Loop ceiling 3; if attempt 3 still fails, stop
-
-sg-run-pipeline retries at most 3 times internally. If attempt 3 still fails → write verdict=`re-plan` to check.yaml and **do not invoke sg-sign-check** — a machine-layer fail goes straight to v2 decision. validate enforces `attempts.length ≤ 3` to prevent "fake-4th attempts".
-
-### 6. /sg-sync-notebook is human-triggered, never auto on approve
+### 5. /sg-sync-notebook is human-triggered, never auto on signed_off
 
 Distilling into the memory library is a "value layer" operation; the human must decide when. Source-directory `rm -rf` only happens after model self-confirmation passes.
 
-### 7. CLI argument is dateId, not id
+### 6. CLI argument is dateId, not id
 
-`specguard validate <dateId>` / `specguard verify <dateId>`. dateId format: `{YYYYMMDD}-<kebab-id>`, e.g. `20260504-add-auth`. `yaml-io.ts:parseDateId` parses it. plan.id MUST equal the parsed id portion.
+`specguard validate <dateId>` / `specguard verify <dateId>`. dateId format: `{YYYYMMDD}-<kebab-id>`, e.g. `20260504-add-auth`. `yaml-io.ts:parseDateId` parses it. spec.id MUST equal the parsed id portion (and plan.id / tasks.id / check.id MUST equal spec.id).
 
-### 8. CLI not on PATH = hooks silently no-op
+### 7. CLI not on PATH = hooks silently no-op
 
 `hooks/scripts/*.sh` is `command -v specguard ... || true`: if `@yupanzi/specguard` isn't installed globally, every hook **exits 0 with no stderr** — yaml-write / session-start / prompt-submit are nominally registered but enforce nothing. Schema violations slip through; no validation log; the user sees "the plugin is doing nothing".
 
-`/specguard:sg-init-project` step 1 (Ensure CLI is on PATH) is the cure — see that skill for the install flow. When a user reports "I edited plan.yaml but nothing validated", the very first probe is `command -v specguard`.
+When a user reports "I edited spec.yaml but nothing validated", the very first probe is `command -v specguard`.
 
 ---
 
-## Current version boundary (v0.1.0)
+## Current version boundary (v0.2.0)
 
-v0.1.0 = Claude Code Plugin form. The `.claude-plugin/` + `hooks/` + `skills/` trinity is in place; 3 hooks (yaml-write / session-start / prompt-submit) + 3 enforcement levels (strict / warn / off) + 2-tier override (global / per-hook). CLI subcommands: `init` / `config` / `validate` / `verify` / `hook`. `init` auto-maintains `.gitignore` (deterministic; doesn't create `.gitignore` when the project lacks one). `/specguard:sg-init-project` skill scans the project to seed KSC notebook on top of the deterministic skeleton.
+v0.2.0 = the four-phase wipe-and-rebuild release. Key shifts from v0.1.0:
+
+- Slash command renames (sg-ask-plan → sg-spec-ask / sg-run-pipeline → sg-plan-tasks / sg-sign-check → sg-check-guard; sg-sync-notebook unchanged)
+- Skill consolidation (sg-init-project merged into sg-sync-notebook as the init-when-empty path)
+- YAML reorganization (plan.yaml split into spec/plan/tasks; pipeline.yaml deleted)
+- Directory flattening (no v1/v2/ subdirs, no logs/r<n>/ subdirs)
+- Retry mechanism removed (no r1/r2/r3; failure → new dateId)
+- Schema rules updated (added cross-file integrity + orphan task dir check; removed monotonic n / attempts ceiling / freeze integrity)
 
 The following are **out of scope**; the AI must NOT add them on its own:
 
-- A `plan.failure_class` field (redundant with `ksc_check.evidence`; hard rule #2 minimum-fields)
+- A `spec.failure_class` field (redundant with `ksc_check.evidence`; hard rule #2 minimum-fields)
 - Auto-attribution logic for KSC (programmatic failure-mode classification)
-- Auto-injecting notebook into the next plan ("crystallize as template" automation)
+- Auto-injecting notebook into the next spec ("crystallize as template" automation)
 - Notebook asset staleness detection (auto-flagging K-library references whose source code drifted)
 - Cross-language sample projects e2e (verification, not a deliverable)
 - A `notebook` CLI subcommand (distillation is owned by `/specguard:sg-sync-notebook`; the CLI reuses validate to check frontmatter)
-- Plugin telemetry / hook retry / fallback chain (post v0.1.x territory)
+- Plugin telemetry / hook retry / fallback chain (post v0.2.x territory)
 - `specguard config set` dotted paths beyond the `enforcement` and `hooks.<name>` categories (don't widen to arbitrary YAML paths)
+- Reintroducing version subdirectories or attempt retry mechanisms (v0.2.0 deliberately removed these)
 
-**v0.1.1 roadmap**: notebook auto-injection into the next plan + auto-attribution logic for KSC + asset staleness detection.
+**v0.2.1 roadmap**: notebook auto-injection into the next spec + auto-attribution logic for KSC + asset staleness detection.
 
 If you find something "obviously needed but not above", ASK before opening the gate.
 
@@ -276,10 +283,10 @@ Run through this before touching anything:
 - [ ] Modifying `hooks/scripts/*.sh`? Stay at 1 business line (hard rule #7); all logic lives in `commands/hook.ts`.
 - [ ] Adding a new slash command? Always `skills/<name>/SKILL.md` + `disable-model-invocation: true`; never `.claude/skills/` (deprecated).
 - [ ] Modifying skill or README/CLAUDE "examples"? Check whether examples bind to a stack (single mention of `package.json` / `npm` / `Cargo.toml`) — that violates hard rule #6.
-- [ ] Approaching the v0.1.0 boundary (above section)? Stop and confirm whether this should land in v0.1.1.
-- [ ] Writing YAML? Cut every field not in the schema.
+- [ ] Approaching the v0.2.0 boundary (above section)? Stop and confirm whether this should land in v0.2.1.
+- [ ] Writing YAML? Cut every field not in the schema. Each phase writes its own yaml only (sg-spec-ask → spec.yaml; sg-plan-tasks → plan.yaml + tasks.yaml; sg-check-guard → check.yaml).
 - [ ] Adding hook handler behavior? Reuse `lib/config.ts:effectiveEnforcement` for enforcement parsing; don't hardcode level checks in hook.ts.
-- [ ] Fixing a bug? Read `.specguard/notebook/INDEX.md` first, then drill down per the match-then-fetch protocol described in `/specguard:sg-ask-plan` (don't read every topic upfront).
+- [ ] Fixing a bug? Read `.specguard/notebook/INDEX.md` first, then drill down per the match-then-fetch protocol described in `/specguard:sg-spec-ask` (don't read every topic upfront).
 
 ---
 

@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://specguard.dev/schemas/tasks.schema.json",
+  "title": "specguard tasks",
+  "type": "object",
+  "required": ["version", "id", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "kebab-case change id; must equal spec.id"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "atomic execution steps; each must verify against a spec.checks[].id",
+      "items": {
+        "type": "object",
+        "required": ["id", "do", "verify", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "do": { "type": "string", "minLength": 1 },
+          "verify": {
+            "type": "string",
+            "minLength": 1,
+            "description": "must reference a spec.checks[].id (cross-file integrity enforced by validate)"
+          },
+          "status": {
+            "enum": ["pending", "running", "passed", "failed"],
+            "description": "single-shot execution; failure routes to /sg-check-guard verdict=re-plan"
+          },
+          "result": { "type": "string" },
+          "started_at": { "type": "string" },
+          "finished_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

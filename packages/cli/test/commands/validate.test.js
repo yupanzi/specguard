@@ -1,12 +1,17 @@
 'use strict'
 const { test, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const { validate, validateNotebook } = require('../../dist/commands/validate')
 const {
   enterTmp,
   leaveTmp,
   writeYaml,
+  HAPPY_SPEC_TEMPLATE,
   HAPPY_PLAN_TEMPLATE,
+  HAPPY_TASKS_TEMPLATE,
+  seedHealthyChange,
+  writeTaskDebug,
   writeNotebookFile,
   defaultRootIndexFm,
   defaultLibraryIndexFm,
@@ -15,44 +20,56 @@ const {
 } = require('../_helpers')
 
 const DATE_ID = '20260505-add-auth'
-const HAPPY = HAPPY_PLAN_TEMPLATE('add-auth')
+const ID = 'add-auth'
 
 beforeEach(() => enterTmp())
 afterEach(() => leaveTmp())
 
-test('validate: happy plan → ok=true, no errors', () => {
-  writeYaml(DATE_ID, 'plan.yaml', HAPPY)
+test('validate: spec only → ok=true', () => {
+  writeYaml(DATE_ID, 'spec.yaml', HAPPY_SPEC_TEMPLATE(ID))
   const r = validate(DATE_ID)
-  assert.equal(r.ok, true)
+  assert.equal(r.ok, true, `errors: ${r.errors.join(' / ')}`)
   assert.deepEqual(r.errors, [])
 })
 
-test('validate: happy plan with llm how → ok', () => {
-  const yaml = HAPPY.replace(
+test('validate: spec + plan + tasks all healthy → ok', () => {
+  seedHealthyChange(DATE_ID, ID)
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, true, `errors: ${r.errors.join(' / ')}`)
+})
+
+test('validate: spec missing → fail', () => {
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, false)
+  assert.match(r.errors.join('\n'), /spec\.yaml not found/)
+})
+
+test('validate: spec with llm how → ok', () => {
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { llm: "is it correct?" }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, true)
 })
 
-test('validate: happy plan with manual how → ok', () => {
-  const yaml = HAPPY.replace(
+test('validate: spec with manual how → ok', () => {
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { manual: "review by hand" }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, true)
 })
 
-test('validate: how as raw string → exactly 1 error (must be object), no oneOf noise', () => {
-  const yaml = HAPPY.replace(
+test('validate: how as raw string → exactly 1 error (must be object)', () => {
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: "cmd: node --version"'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.equal(r.errors.length, 1, `expected 1 error, got: ${r.errors.join(' / ')}`)
@@ -60,11 +77,11 @@ test('validate: how as raw string → exactly 1 error (must be object), no oneOf
 })
 
 test('validate: empty cmd array → exactly 1 error (minItems)', () => {
-  const yaml = HAPPY.replace(
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { cmd: [] }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.equal(r.errors.length, 1)
@@ -72,11 +89,11 @@ test('validate: empty cmd array → exactly 1 error (minItems)', () => {
 })
 
 test('validate: dual cmd+llm → exactly 1 error (maxProperties)', () => {
-  const yaml = HAPPY.replace(
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { cmd: [node], llm: "x" }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.equal(r.errors.length, 1)
@@ -84,40 +101,40 @@ test('validate: dual cmd+llm → exactly 1 error (maxProperties)', () => {
 })
 
 test('validate: empty how object → minProperties', () => {
-  const yaml = HAPPY.replace(
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: {}'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.match(r.errors.join('\n'), /must NOT have fewer than 1 properties/)
 })
 
 test('validate: unknown key in how → unknown field', () => {
-  const yaml = HAPPY.replace(
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { shell: "x" }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.match(r.errors.join('\n'), /unknown field: shell/)
 })
 
 test('validate: non-string token in cmd → must be string', () => {
-  const yaml = HAPPY.replace(
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace(
     'how: { cmd: [node, --version] }',
     'how: { cmd: [node, 42] }'
   )
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.equal(r.errors.length, 1)
   assert.match(r.errors[0], /\/checks\/0\/how\/cmd\/1 must be string/)
 })
 
-test('validate: dup check id → findDuplicates', () => {
+test('validate: dup check id in spec → findDuplicates', () => {
   const yaml = `version: 1
 id: add-auth
 goal: smoke
@@ -129,85 +146,84 @@ checks:
   - id: c1
     what: y
     how: { cmd: [ls] }
-tasks:
-  - id: t1
-    do: noop
-    verify: c1
 `
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
   assert.match(r.errors.join('\n'), /checks\[1\]\.id duplicate/)
 })
 
-test('validate: task verify references unknown check → ref-integrity', () => {
-  const yaml = HAPPY.replace('verify: c1', 'verify: missing')
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+test('validate: tasks.verify references unknown spec.checks.id → ref-integrity', () => {
+  writeYaml(DATE_ID, 'spec.yaml', HAPPY_SPEC_TEMPLATE(ID))
+  writeYaml(DATE_ID, 'plan.yaml', HAPPY_PLAN_TEMPLATE(ID))
+  const tasksYaml = HAPPY_TASKS_TEMPLATE(ID).replace('verify: c1', 'verify: missing')
+  writeYaml(DATE_ID, 'tasks.yaml', tasksYaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
-  assert.match(r.errors.join('\n'), /references unknown check: "missing"/)
+  assert.match(r.errors.join('\n'), /references unknown spec\.checks\.id: "missing"/)
 })
 
-test('validate: id mismatch dateId → fail', () => {
-  const yaml = HAPPY.replace('id: add-auth', 'id: wrong-id')
-  writeYaml(DATE_ID, 'plan.yaml', yaml)
+test('validate: spec id mismatch dateId → fail', () => {
+  const yaml = HAPPY_SPEC_TEMPLATE(ID).replace('id: add-auth', 'id: wrong-id')
+  writeYaml(DATE_ID, 'spec.yaml', yaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
-  assert.match(r.errors.join('\n'), /does not match parsed id/)
+  assert.match(r.errors.join('\n'), /\[spec\] id "wrong-id" does not match parsed id/)
 })
 
-test('validate: pipeline attempts.length > 3 → exceeds MAX_ATTEMPTS', () => {
-  writeYaml(DATE_ID, 'plan.yaml', HAPPY)
-  const pipeline = `id: add-auth
-attempts:
-  - n: 1
-    at: '2026-05-05T00:00:00Z'
-    task_results:
-      - id: t1
-        status: pass
-  - n: 2
-    at: '2026-05-05T00:00:00Z'
-    task_results:
-      - id: t1
-        status: pass
-  - n: 3
-    at: '2026-05-05T00:00:00Z'
-    task_results:
-      - id: t1
-        status: pass
-  - n: 4
-    at: '2026-05-05T00:00:00Z'
-    task_results:
-      - id: t1
-        status: pass
+test('validate: cross-file id mismatch (plan.id ≠ spec.id) → fail', () => {
+  writeYaml(DATE_ID, 'spec.yaml', HAPPY_SPEC_TEMPLATE(ID))
+  const planYaml = HAPPY_PLAN_TEMPLATE(ID).replace('id: add-auth', 'id: other-id')
+  writeYaml(DATE_ID, 'plan.yaml', planYaml)
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, false)
+  assert.match(r.errors.join('\n'), /\[plan\] id "other-id" does not match parsed id/)
+})
+
+test('validate: cross-file id mismatch (tasks.id ≠ spec.id) → fail', () => {
+  writeYaml(DATE_ID, 'spec.yaml', HAPPY_SPEC_TEMPLATE(ID))
+  writeYaml(DATE_ID, 'plan.yaml', HAPPY_PLAN_TEMPLATE(ID))
+  const tasksYaml = HAPPY_TASKS_TEMPLATE(ID).replace('id: add-auth', 'id: other-id')
+  writeYaml(DATE_ID, 'tasks.yaml', tasksYaml)
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, false)
+  assert.match(r.errors.join('\n'), /\[tasks\] id "other-id" does not match parsed id/)
+})
+
+test('validate: orphan task directory (tasks/t99/ but no t99 in tasks.yaml) → fail', () => {
+  seedHealthyChange(DATE_ID, ID)
+  writeTaskDebug(DATE_ID, 't99', 'orphan log')
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, false)
+  assert.match(r.errors.join('\n'), /orphan task directory: tasks\/t99\//)
+})
+
+test('validate: task directory matching tasks.yaml entry → ok', () => {
+  seedHealthyChange(DATE_ID, ID)
+  writeTaskDebug(DATE_ID, 't1', 'real log')
+  const r = validate(DATE_ID)
+  assert.equal(r.ok, true, `errors: ${r.errors.join(' / ')}`)
+})
+
+test('validate: check_results references unknown spec.checks.id → fail', () => {
+  seedHealthyChange(DATE_ID, ID)
+  const checkYaml = `version: 1
+id: ${ID}
+check_results:
+  - id: nonexistent
+    status: pass
+verdict: done
 `
-  writeYaml(DATE_ID, 'pipeline.yaml', pipeline)
+  writeYaml(DATE_ID, 'check.yaml', checkYaml)
   const r = validate(DATE_ID)
   assert.equal(r.ok, false)
-  assert.match(r.errors.join('\n'), /attempts\.length=4 exceeds MAX_ATTEMPTS=3/)
-})
-
-test('validate: pipeline n non-monotonic → checkMonotonicN', () => {
-  writeYaml(DATE_ID, 'plan.yaml', HAPPY)
-  const pipeline = `id: add-auth
-attempts:
-  - n: 2
-    at: '2026-05-05T00:00:00Z'
-    task_results: []
-  - n: 1
-    at: '2026-05-05T00:00:00Z'
-    task_results: []
-`
-  writeYaml(DATE_ID, 'pipeline.yaml', pipeline)
-  const r = validate(DATE_ID)
-  assert.equal(r.ok, false)
-  assert.match(r.errors.join('\n'), /must be non-decreasing/)
+  assert.match(r.errors.join('\n'), /\[check\] check_results\.id "nonexistent" not in spec\.checks/)
 })
 
 // ─── validate(dateId) is independent of notebook state ──────
 
 test('validate(dateId): broken notebook does NOT taint dateId verdict', () => {
-  writeYaml(DATE_ID, 'plan.yaml', HAPPY)
+  writeYaml(DATE_ID, 'spec.yaml', HAPPY_SPEC_TEMPLATE(ID))
   seedHealthyNotebook()
   writeNotebookFile(
     '.specguard/notebook/knowledge/auth.md',

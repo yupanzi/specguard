@@ -22,8 +22,8 @@ program.name('specguard').version(pkgVersion).description('specguard CLI')
 
 program
   .command('validate [dateId]')
-  .description('Validate plan/pipeline/check yaml of <dateId> (e.g. 20260504-add-auth); pass --notebook-only to skip dateId scope and only check notebook reference integrity')
-  .option('--notebook-only', 'skip plan/pipeline/check yaml validation; only run notebook frontmatter + reference integrity checks (no dateId required)')
+  .description('Validate spec/plan/tasks/check yaml of <dateId> (e.g. 20260504-add-auth); pass --notebook-only to skip dateId scope and only check notebook reference integrity')
+  .option('--notebook-only', 'skip spec/plan/tasks/check yaml validation; only run notebook frontmatter + reference integrity checks (no dateId required)')
   .action((dateId: string | undefined, opts: { notebookOnly?: boolean }) => {
     if (opts.notebookOnly) {
       const errs = validateNotebook()
@@ -82,7 +82,7 @@ program
       console.log(`  notebook:  .specguard/notebook/INDEX.md (+ knowledge/skill/check INDEX skeletons)`)
       console.log()
       console.log('next:')
-      console.log('  start new change:    /specguard:sg-ask-plan')
+      console.log('  start new change:    /specguard:sg-spec-ask')
       console.log('  change enforcement:  specguard config set enforcement <level>')
       console.log('  per-hook override:   specguard config set hooks.<name> <level>')
       process.exit(0)

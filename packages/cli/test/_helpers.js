@@ -2,7 +2,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { versionDir, frontmatterBlock } = require('../dist/lib/yaml-io')
+const { changeDir, taskDir, frontmatterBlock } = require('../dist/lib/yaml-io')
 
 let tmpRoot
 let originalCwd
@@ -19,13 +19,19 @@ function leaveTmp() {
   fs.rmSync(tmpRoot, { recursive: true, force: true })
 }
 
-function writeYaml(dateId, name, content, version = 1) {
-  const dir = versionDir(dateId, version)
+function writeYaml(dateId, name, content) {
+  const dir = changeDir(dateId)
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, name), content)
 }
 
-const HAPPY_PLAN_TEMPLATE = (id) => `version: 1
+function writeTaskDebug(dateId, taskId, content = 'debug log') {
+  const dir = taskDir(dateId, taskId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'debug.log'), content)
+}
+
+const HAPPY_SPEC_TEMPLATE = (id) => `version: 1
 id: ${id}
 goal: smoke
 asks: []
@@ -33,11 +39,30 @@ checks:
   - id: c1
     what: x
     how: { cmd: [node, --version] }
+`
+
+const HAPPY_PLAN_TEMPLATE = (id) => `version: 1
+id: ${id}
+files:
+  - src/foo.ts
+approach: |
+  Implement foo via node.
+`
+
+const HAPPY_TASKS_TEMPLATE = (id) => `version: 1
+id: ${id}
 tasks:
   - id: t1
     do: noop
     verify: c1
+    status: pending
 `
+
+function seedHealthyChange(dateId, id) {
+  writeYaml(dateId, 'spec.yaml', HAPPY_SPEC_TEMPLATE(id))
+  writeYaml(dateId, 'plan.yaml', HAPPY_PLAN_TEMPLATE(id))
+  writeYaml(dateId, 'tasks.yaml', HAPPY_TASKS_TEMPLATE(id))
+}
 
 const TEST_DATE = '20260505'
 
@@ -100,7 +125,11 @@ module.exports = {
   enterTmp,
   leaveTmp,
   writeYaml,
+  writeTaskDebug,
+  HAPPY_SPEC_TEMPLATE,
   HAPPY_PLAN_TEMPLATE,
+  HAPPY_TASKS_TEMPLATE,
+  seedHealthyChange,
   TEST_DATE,
   writeNotebookFile,
   defaultRootIndexFm,

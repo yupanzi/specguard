@@ -3,48 +3,50 @@
   "$id": "https://specguard.dev/schemas/check.schema.json",
   "title": "specguard check",
   "type": "object",
-  "required": ["id", "attempts"],
+  "required": ["version", "id", "check_results", "verdict"],
   "additionalProperties": false,
   "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
     "id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$"
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "kebab-case change id; must equal spec.id"
     },
-    "attempts": {
+    "check_results": {
       "type": "array",
+      "description": "one entry per spec.checks[]",
       "items": {
         "type": "object",
-        "required": ["n", "check_results", "verdict"],
+        "required": ["id", "status"],
         "additionalProperties": false,
         "properties": {
-          "n": { "type": "integer", "minimum": 1 },
-          "check_results": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["id", "status"],
-              "additionalProperties": false,
-              "properties": {
-                "id": { "type": "string", "minLength": 1 },
-                "status": { "enum": ["pending", "pass", "fail"] },
-                "evidence": { "type": "string" }
-              }
-            }
-          },
-          "verdict": {
-            "enum": ["done", "re-run", "re-plan", "awaiting-llm", "ksc-rejected", "approval-rejected"]
-          },
-          "approved": { "type": "boolean" },
-          "ksc_check": {
-            "type": "object",
-            "required": ["status"],
-            "additionalProperties": false,
-            "properties": {
-              "status": { "enum": ["pass", "fail", "skipped"] },
-              "evidence": { "type": "string" }
-            }
-          }
+          "id": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["pending", "pass", "fail"] },
+          "evidence": { "type": "string" }
         }
+      }
+    },
+    "verdict": {
+      "enum": ["done", "re-plan", "ksc-reject", "awaiting-llm"],
+      "description": "done = sign off; re-plan/ksc-reject = open new dateId; awaiting-llm = some checks pending"
+    },
+    "signed_off": {
+      "type": "boolean",
+      "description": "true only when user explicitly approves via AskUserQuestion"
+    },
+    "ksc_check": {
+      "type": "object",
+      "description": "KSC three-axis review evidence",
+      "additionalProperties": false,
+      "properties": {
+        "k": { "type": "string", "description": "Knowledge axis: violates project map invariants/abstractions?" },
+        "s": { "type": "string", "description": "Skill axis: conflicts with decision templates?" },
+        "c": { "type": "string", "description": "Check axis: missed correctness criteria?" },
+        "status": { "enum": ["pass", "fail", "skipped"] },
+        "evidence": { "type": "string" }
       }
     }
   }

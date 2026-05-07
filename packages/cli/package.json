@@ -1,6 +1,6 @@
 {
   "name": "@yupanzi/specguard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Spec-guarded AI workflow CLI; runtime backend for the specguard Claude Code plugin. Never imports any AI SDK.",
   "license": "MIT",
   "author": "specguard contributors",
@@ -37,7 +37,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "prepack": "node ../../scripts/copy-readme.mjs"
   },
   "dependencies": {
     "ajv": "^8.12.0",

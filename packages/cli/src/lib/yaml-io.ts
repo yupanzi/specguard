@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
-import type { NotebookLibrary } from './types'
+import type { NotebookAxis, NotebookLibrary } from './types'
 
 const SPECGUARD_ROOT = '.specguard'
 const ROOT = `${SPECGUARD_ROOT}/changes`
@@ -9,12 +9,11 @@ const ROOT = `${SPECGUARD_ROOT}/changes`
 export const DATEID_PATTERN = /^(\d{8})-([a-z][a-z0-9-]*)$/
 
 const CHANGE_YAML_PATH_PATTERN =
-  /\.specguard\/changes\/(\d{8}-[a-z][a-z0-9-]*)\/v(\d+)\/(plan|pipeline|check)\.yaml$/
+  /\.specguard\/changes\/(\d{8}-[a-z][a-z0-9-]*)\/(spec|plan|tasks|check)\.yaml$/
 
 export interface ChangeYamlPath {
   dateId: string
-  version: number
-  kind: 'plan' | 'pipeline' | 'check'
+  kind: 'spec' | 'plan' | 'tasks' | 'check'
 }
 
 export function parseChangeYamlPath(filePath: string): ChangeYamlPath | null {
@@ -22,8 +21,7 @@ export function parseChangeYamlPath(filePath: string): ChangeYamlPath | null {
   if (!m) return null
   return {
     dateId: m[1],
-    version: parseInt(m[2], 10),
-    kind: m[3] as ChangeYamlPath['kind'],
+    kind: m[2] as ChangeYamlPath['kind'],
   }
 }
 
@@ -50,20 +48,26 @@ export function parseDateId(dateId: string): string {
 export const changeDir = (dateId: string): string =>
   path.resolve(ROOT, dateId)
 
-export const versionDir = (dateId: string, version: number): string =>
-  path.resolve(ROOT, dateId, `v${version}`)
+export const specPath = (dateId: string): string =>
+  path.resolve(changeDir(dateId), 'spec.yaml')
 
-export const planPath = (dateId: string, version: number): string =>
-  path.resolve(versionDir(dateId, version), 'plan.yaml')
+export const planPath = (dateId: string): string =>
+  path.resolve(changeDir(dateId), 'plan.yaml')
 
-export const pipelinePath = (dateId: string, version: number): string =>
-  path.resolve(versionDir(dateId, version), 'pipeline.yaml')
+export const tasksPath = (dateId: string): string =>
+  path.resolve(changeDir(dateId), 'tasks.yaml')
 
-export const checkPath = (dateId: string, version: number): string =>
-  path.resolve(versionDir(dateId, version), 'check.yaml')
+export const checkPath = (dateId: string): string =>
+  path.resolve(changeDir(dateId), 'check.yaml')
 
-export const logsDir = (dateId: string, version: number, n: number): string =>
-  path.resolve(versionDir(dateId, version), 'logs', `r${n}`)
+export const taskDir = (dateId: string, taskId: string): string =>
+  path.resolve(changeDir(dateId), 'tasks', taskId)
+
+export const taskPromptPath = (dateId: string, taskId: string): string =>
+  path.resolve(taskDir(dateId, taskId), 'prompt.md')
+
+export const taskDebugLogPath = (dateId: string, taskId: string): string =>
+  path.resolve(taskDir(dateId, taskId), 'debug.log')
 
 export function isENOENT(e: unknown): boolean {
   return (e as NodeJS.ErrnoException)?.code === 'ENOENT'
@@ -83,63 +87,53 @@ export function writeYaml(p: string, data: unknown): void {
   fs.writeFileSync(p, yaml.dump(data, { noRefs: true, lineWidth: 120 }))
 }
 
-function scanVersions(dateId: string): number[] {
+export function loadSpec(dateId: string): unknown {
+  const p = specPath(dateId)
+  try {
+    return yaml.load(fs.readFileSync(p, 'utf8'))
+  } catch (e) {
+    if (isENOENT(e)) throw new Error(`spec.yaml not found: ${p}`)
+    throw e
+  }
+}
+
+export function loadSpecOptional(dateId: string): unknown | null {
+  return readYamlOptional(specPath(dateId))
+}
+
+export function loadPlanOptional(dateId: string): unknown | null {
+  return readYamlOptional(planPath(dateId))
+}
+
+export function loadTasksOptional(dateId: string): unknown | null {
+  return readYamlOptional(tasksPath(dateId))
+}
+
+export function loadCheckOptional(dateId: string): unknown | null {
+  return readYamlOptional(checkPath(dateId))
+}
+
+export function saveTasks(dateId: string, data: unknown): void {
+  writeYaml(tasksPath(dateId), data)
+}
+
+export function saveCheck(dateId: string, data: unknown): void {
+  writeYaml(checkPath(dateId), data)
+}
+
+export function listTaskDirs(dateId: string): string[] {
+  const dir = path.resolve(changeDir(dateId), 'tasks')
   let entries: fs.Dirent[]
   try {
-    entries = fs.readdirSync(changeDir(dateId), { withFileTypes: true })
+    entries = fs.readdirSync(dir, { withFileTypes: true })
   } catch (e) {
     if (isENOENT(e)) return []
     throw e
   }
   return entries
-    .filter((e) => e.isDirectory() && /^v\d+$/.test(e.name))
-    .map((e) => parseInt(e.name.slice(1), 10))
-    .filter((n) => n > 0)
-    .sort((a, b) => a - b)
-}
-
-export function listVersions(dateId: string): number[] {
-  return scanVersions(dateId)
-}
-
-export function activeVersion(dateId: string): number {
-  const versions = scanVersions(dateId)
-  if (versions.length === 0) {
-    throw new Error(`no version directories found in ${changeDir(dateId)}`)
-  }
-  return versions[versions.length - 1]
-}
-
-export function loadPlan(dateId: string, version: number): unknown {
-  const p = planPath(dateId, version)
-  try {
-    return yaml.load(fs.readFileSync(p, 'utf8'))
-  } catch (e) {
-    if (isENOENT(e)) throw new Error(`plan.yaml not found: ${p}`)
-    throw e
-  }
-}
-
-export function loadPipelineOptional(
-  dateId: string,
-  version: number
-): unknown | null {
-  return readYamlOptional(pipelinePath(dateId, version))
-}
-
-export function loadCheckOptional(
-  dateId: string,
-  version: number
-): unknown | null {
-  return readYamlOptional(checkPath(dateId, version))
-}
-
-export function saveCheck(
-  dateId: string,
-  version: number,
-  data: unknown
-): void {
-  writeYaml(checkPath(dateId, version), data)
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort()
 }
 
 export const NOTEBOOK_LIBRARIES: readonly NotebookLibrary[] = [
@@ -172,7 +166,7 @@ export function frontmatterBlock(data: Record<string, unknown>): string {
 const REF_ID_PATTERN = /^([KSC])-(\d{2})$/
 
 export interface ParsedRefId {
-  axis: 'K' | 'S' | 'C'
+  axis: NotebookAxis
   n: number
 }
 
@@ -180,7 +174,7 @@ export function parseRefId(s: string): ParsedRefId | null {
   const m = REF_ID_PATTERN.exec(s)
   if (!m) return null
   return {
-    axis: m[1] as 'K' | 'S' | 'C',
+    axis: m[1] as NotebookAxis,
     n: parseInt(m[2], 10),
   }
 }
